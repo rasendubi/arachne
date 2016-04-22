@@ -1,0 +1,25 @@
+name:                mqtt-broker
+version:             0.1.0.0
+homepage:            https://github.com/rasendubi/mqtt-broker
+bug-reports:         https://github.com/rasendubi/mqtt-broker/issues
+synopsis:            A broker for MQTT protocol
+license:             BSD3
+license-file:        LICENSE
+author:              Alexey Shmalko <rasen.dubi@gmail.com>
+maintainer:          Alexey Shmalko <rasen.dubi@gmail.com>
+copyright:           (c) 2016 Alexey Shmalko
+category:            Network
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable mqtt-broker
+  main-is:             Main.hs
+  -- other-modules:       
+  -- other-extensions:    
+  build-depends:       base >=4.7 && <4.8
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/rasendubi/mqtt-broker
