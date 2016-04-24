@@ -15,6 +15,7 @@ module Network.MQTT.Packet
   , PingrespPacket(..)
   , DisconnectPacket(..)
 
+  , ConnackReturnCode(..)
   , Message(..)
   , QoS(..)
   , ClientIdentifier(..)
@@ -132,17 +133,20 @@ data PubcompPacket
 
 data SubscribePacket
   = SubscribePacket
-    { subscribeTopicFilters :: [TopicFilter]
+    { subsribePacketIdentifier :: !PacketIdentifier,
+      subscribeTopicFilters :: [TopicFilter]
     } deriving (Eq, Show)
 
 data SubackPacket
   = SubackPacket
-    { subackResponses :: [Maybe QoS]
+    { subackPacketIdentifier :: !PacketIdentifier,
+      subackResponses :: [Maybe QoS]
     } deriving (Eq, Show)
 
 data UnsubscribePacket
   = UnsubscribePacket
-    { unsubscribe :: [TopicFilter]
+    { unsubscribePacketIdentifier :: !PacketIdentifier,
+      unsubscribeTopicFilters :: [TopicFilter]
     } deriving (Eq, Show)
 
 data UnsubackPacket
