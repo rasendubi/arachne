@@ -134,19 +134,19 @@ data PubcompPacket
 data SubscribePacket
   = SubscribePacket
     { subscribePacketIdentifier :: !PacketIdentifier,
-      subscribeTopicFiltersQoS :: [(TopicFilter, QoS)]
+      subscribeTopicFiltersQoS  :: [(TopicFilter, QoS)]
     } deriving (Eq, Show)
 
 data SubackPacket
   = SubackPacket
     { subackPacketIdentifier :: !PacketIdentifier,
-      subackResponses :: [Maybe QoS]
+      subackResponses        :: [Maybe QoS]
     } deriving (Eq, Show)
 
 data UnsubscribePacket
   = UnsubscribePacket
     { unsubscribePacketIdentifier :: !PacketIdentifier,
-      unsubscribeTopicFilters :: [TopicFilter]
+      unsubscribeTopicFilters     :: [TopicFilter]
     } deriving (Eq, Show)
 
 data UnsubackPacket
