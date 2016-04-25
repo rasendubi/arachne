@@ -36,22 +36,22 @@ data QoS
   | QoS2
   deriving (Eq, Show)
 
-newtype ClientIdentifier = ClientIdentifier Text
+newtype ClientIdentifier = ClientIdentifier { unClientIdentifier :: Text }
   deriving (Eq, Show)
 
-newtype PacketIdentifier = PacketIdentifier Word16
+newtype PacketIdentifier = PacketIdentifier { unPacketIdentifier :: Word16 }
   deriving (Eq, Show)
 
-newtype UserName = UserName Text
+newtype UserName = UserName { unUserName :: Text }
   deriving (Eq, Show)
 
-newtype Password = Password ByteString
+newtype Password = Password { unPassword :: ByteString }
   deriving (Eq, Show)
 
-newtype Topic = Topic Text
+newtype Topic = Topic { unTopic :: Text }
   deriving (Eq, Show)
 
-newtype TopicFilter = TopicFilter Text
+newtype TopicFilter = TopicFilter { unTopicFilter :: Text }
   deriving (Eq, Show)
 
 data Message
@@ -81,7 +81,7 @@ data Packet
 
 data ConnectPacket
   = ConnectPacket
-    { connectClientIdentifier :: !(Maybe ClientIdentifier)
+    { connectClientIdentifier :: !ClientIdentifier
     , connectWillMsg          :: !(Maybe Message)
     , connectUserName         :: !(Maybe UserName)
     , connectPassword         :: !(Maybe Password)
@@ -133,8 +133,8 @@ data PubcompPacket
 
 data SubscribePacket
   = SubscribePacket
-    { subsribePacketIdentifier :: !PacketIdentifier,
-      subscribeTopicFilters :: [TopicFilter]
+    { subscribePacketIdentifier :: !PacketIdentifier,
+      subscribeTopicFiltersQoS :: [(TopicFilter, QoS)]
     } deriving (Eq, Show)
 
 data SubackPacket
