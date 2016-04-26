@@ -1,31 +1,32 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
 module Network.MQTT.Encoder (encodePacket) where
 
+import           Network.MQTT.Packet
+
 import           Data.Bits (shiftL, (.|.))
-import           Data.ByteString.Builder
-import           Data.Foldable()
+import           Data.ByteString.Builder (word8, word16BE, Builder, toLazyByteString, byteString)
 import           Data.Int (Int64)
-import           Data.List
+import           Data.List (foldl1')
 import           Data.Maybe (isJust)
 import           Data.Monoid ((<>))
 import           Data.Text (Text)
 import           Data.Text.Encoding (encodeUtf8)
 import           Data.Word (Word8)
-import           Network.MQTT.Packet
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 
 encodePacket :: Packet -> Builder
 encodePacket packet = mconcat [fixedHeader', variableHeader', payload']
   where
+    fixedHeader' = fixedHeader packet remaining
     variableHeader' = variableHeader packet
     payload' = payload packet
+
     remaining = BSL.length $ toLazyByteString (variableHeader' <> payload')
-    fixedHeader' = fixedHeader packet remaining
 
 fixedHeader :: Packet -> Int64 -> Builder
 fixedHeader packet remaining = word8 (packetTypeValue packet `shiftL` 4 .|. flagBits packet)
-                               <> encodeRemaining remaining
+                               <> encodeRemainingLength remaining
 
 variableHeader :: Packet -> Builder
 variableHeader (CONNECT connectPacket)             = encodeConnectVariableHeader connectPacket
@@ -64,9 +65,7 @@ encodePublishVariableHeader PublishPacket{..} =
   <> maybe mempty encodePacketIdentifier publishPacketIdentifier
 
 encodeText :: Text -> Builder
-encodeText text = word16BE (fromIntegral (BS.length encodedUtf)) <> byteString encodedUtf
-  where
-    encodedUtf = encodeUtf8 text
+encodeText = encodeBytes . encodeUtf8
 
 encodeBytes :: BS.ByteString -> Builder
 encodeBytes bytes = word16BE (fromIntegral (BS.length bytes)) <> byteString bytes
@@ -84,31 +83,28 @@ returnCodeValue BadUserNameOrPassword = 4
 returnCodeValue NotAuthorized         = 5
 
 encodePacketIdentifier :: PacketIdentifier -> Builder
-encodePacketIdentifier PacketIdentifier{..} = word16BE unPacketIdentifier
+encodePacketIdentifier = word16BE . unPacketIdentifier
 
 payload :: Packet -> Builder
 payload (CONNECT connectPacket)         = encodeConnectPayload connectPacket
 payload (PUBLISH publishPacket)         = encodePublishPayload publishPacket
 payload (SUBSCRIBE subscribePacket)     = encodeSubscribePayload subscribePacket
 payload (SUBACK subackPacket)           = encodeSubackPayload subackPacket
-payload (UNSUBSCRIBE unsubscribePacket) = encodeUnsubscribePaylooad unsubscribePacket
+payload (UNSUBSCRIBE unsubscribePacket) = encodeUnsubscribePayload unsubscribePacket
 payload _                               = mempty
 
-encodeUnsubscribePaylooad :: UnsubscribePacket -> Builder
-encodeUnsubscribePaylooad UnsubscribePacket{..} =
-  foldMap (encodeText . unTopicFilter) unsubscribeTopicFilters
+encodeUnsubscribePayload :: UnsubscribePacket -> Builder
+encodeUnsubscribePayload = foldMap (encodeText . unTopicFilter) . unsubscribeTopicFilters
 
 encodeSubackPayload :: SubackPacket -> Builder
-encodeSubackPayload SubackPacket{..} = foldMap (word8 . maybe 128 fromQoS) subackResponses
+encodeSubackPayload = foldMap (word8 . maybe 0x80 fromQoS) . subackResponses
 
 encodeSubscribePayload :: SubscribePacket -> Builder
-encodeSubscribePayload SubscribePacket{..} =
-  foldMap
-    (\(topicFilter, qos) -> encodeText (unTopicFilter topicFilter) <> word8 (fromQoS qos))
-    subscribeTopicFiltersQoS
+encodeSubscribePayload = foldMap (\(topicFilter, qos) -> encodeText (unTopicFilter topicFilter) <> word8 (fromQoS qos))
+                         . subscribeTopicFiltersQoS
 
 encodePublishPayload :: PublishPacket -> Builder
-encodePublishPayload PublishPacket{..} = byteString $ messageMessage publishMessage
+encodePublishPayload = byteString . messageMessage . publishMessage
 
 encodeConnectPayload :: ConnectPacket -> Builder
 encodeConnectPayload ConnectPacket{..} =
@@ -120,13 +116,15 @@ encodeConnectPayload ConnectPacket{..} =
     , maybe mempty (encodeBytes . unPassword)            connectPassword
     ]
 
-encodeRemaining :: Int64 -> Builder
-encodeRemaining n =
-  let (x, encodedByte) = n `quotRem` 128
-      encodedByte' = fromIntegral encodedByte
-  in if x > 0
-       then word8 (encodedByte' .|. 128) <> encodeRemaining x
-       else word8 encodedByte'
+encodeRemainingLength :: Int64 -> Builder
+encodeRemainingLength n
+  | n > 536870911 = error $ "Maximum Remaining Length is 536870911, current length is " ++ show n
+  | otherwise =
+      let (x, encodedByte) = n `quotRem` 128
+          encodedByte' = fromIntegral encodedByte
+      in if x > 0
+           then word8 (encodedByte' .|. 128) <> encodeRemainingLength x
+           else word8 encodedByte'
 
 packetTypeValue :: Packet -> Word8
 packetTypeValue (CONNECT _)     = 1
@@ -145,16 +143,15 @@ packetTypeValue (PINGRESP _)    = 13
 packetTypeValue (DISCONNECT _)  = 14
 
 flagBits :: Packet -> Word8
-flagBits (PUBREC _)              = 2
-flagBits (SUBSCRIBE _)           = 2
-flagBits (UNSUBSCRIBE _)         = 2
-flagBits (PUBLISH publishPacket) = toBit dup `shiftL` 3
-                                   .|. fromQoS (messageQoS message) `shiftL` 1
-                                   .|. toBit (messageRetain message)
-  where
-    dup = publishDup publishPacket
-    message = publishMessage publishPacket
-flagBits _                       = 0
+flagBits (PUBREC _)      = 2
+flagBits (SUBSCRIBE _)   = 2
+flagBits (UNSUBSCRIBE _) = 2
+flagBits (PUBLISH publishPacket) =
+  let message = publishMessage publishPacket
+  in toBit (publishDup publishPacket) `shiftL` 3
+     .|. fromQoS (messageQoS message) `shiftL` 1
+     .|. toBit (messageRetain message)
+flagBits _               = 0
 
 toBit :: (Num a) => Bool -> a
 toBit False = 0
