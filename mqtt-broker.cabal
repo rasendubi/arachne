@@ -15,6 +15,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Network.MQTT.Packet
                        Network.MQTT.Parser
+                       Network.MQTT.Encoder
   build-depends:       base
                      , text
                      , bytestring
@@ -27,11 +28,14 @@ test-suite spec
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  build-depends:       base
-                     , mqtt-broker
+  build-depends:       attoparsec
+                     , base
                      , bytestring
-                     , attoparsec
                      , hspec == 2.*
+                     , hspec-smallcheck
+                     , mqtt-broker
+                     , smallcheck >= 1.1.1
+                     , text
 
 source-repository head
   type:     git
