@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 module Network.MQTT.Packet
   ( Packet(..)
   , ConnectPacket(..)
@@ -29,12 +30,13 @@ module Network.MQTT.Packet
 import Data.Word (Word16, Word8)
 import Data.Text (Text)
 import Data.ByteString (ByteString)
+import GHC.Generics (Generic)
 
 data QoS
   = QoS0
   | QoS1
   | QoS2
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 instance Enum QoS where
   toEnum 0 = QoS0
@@ -47,22 +49,22 @@ instance Enum QoS where
   fromEnum QoS2 = 2
 
 newtype ClientIdentifier = ClientIdentifier { unClientIdentifier :: Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 newtype PacketIdentifier = PacketIdentifier { unPacketIdentifier :: Word16 }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 newtype UserName = UserName { unUserName :: Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 newtype Password = Password { unPassword :: ByteString }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 newtype Topic = Topic { unTopic :: Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 newtype TopicFilter = TopicFilter { unTopicFilter :: Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data Message
   = Message
@@ -70,7 +72,7 @@ data Message
     , messageRetain  :: !Bool
     , messageTopic   :: !Topic
     , messageMessage :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data Packet
   = CONNECT ConnectPacket
@@ -87,7 +89,7 @@ data Packet
   | PINGREQ PingreqPacket
   | PINGRESP PingrespPacket
   | DISCONNECT DisconnectPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data ConnectPacket
   = ConnectPacket
@@ -98,13 +100,13 @@ data ConnectPacket
     , connectPassword         :: !(Maybe Password)
     , connectCleanSession     :: !Bool
     , connectKeepAlive        :: !Word16
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data ConnackPacket
   = ConnackPacket
     { connackSessionPresent :: !Bool
     , connackReturnCode     :: !ConnackReturnCode
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data ConnackReturnCode
   = Accepted
@@ -113,66 +115,66 @@ data ConnackReturnCode
   | ServerUnavailable
   | BadUserNameOrPassword
   | NotAuthorized
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data PublishPacket
   = PublishPacket
     { publishDup              :: !Bool
     , publishMessage          :: !Message
     , publishPacketIdentifier :: !(Maybe PacketIdentifier)
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data PubackPacket
   = PubackPacket
     { pubackPacketIdentifier :: !PacketIdentifier
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data PubrecPacket
   = PubrecPacket
     { pubrecPacketIdentifier :: !PacketIdentifier
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data PubrelPacket
   = PubrelPacket
     { pubrelPacketIdentifier :: !PacketIdentifier
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data PubcompPacket
   = PubcompPacket
     { pubcompPacketIdentifier :: !PacketIdentifier
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data SubscribePacket
   = SubscribePacket
     { subscribePacketIdentifier :: !PacketIdentifier,
       subscribeTopicFiltersQoS  :: [(TopicFilter, QoS)]
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data SubackPacket
   = SubackPacket
     { subackPacketIdentifier :: !PacketIdentifier,
       subackResponses        :: [Maybe QoS]
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data UnsubscribePacket
   = UnsubscribePacket
     { unsubscribePacketIdentifier :: !PacketIdentifier,
       unsubscribeTopicFilters     :: [TopicFilter]
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data UnsubackPacket
   = UnsubackPacket
     { unsubackPacketIdentifier :: !PacketIdentifier
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 data PingreqPacket
   = PingreqPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data PingrespPacket
   = PingrespPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data DisconnectPacket
   = DisconnectPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)

@@ -15,6 +15,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Network.MQTT.Packet
                        Network.MQTT.Parser
+                       Network.MQTT.Encoder
   build-depends:       base
                      , text
                      , bytestring
@@ -31,10 +32,13 @@ test-suite spec
   other-modules:       Network.MQTT.ParserSpec
   build-depends:       base
                      , mqtt-broker
+                     , attoparsec
                      , bytestring
                      , text
-                     , attoparsec
                      , hspec == 2.*
+                     , hspec-smallcheck >= 0.3.0
+                     , smallcheck >= 1.1.1
+                     , smallcheck-series >= 0.5.1
   default-language:    Haskell2010
 
 source-repository head
