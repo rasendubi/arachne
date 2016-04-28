@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Network.MQTT.Packet
                        Network.MQTT.Parser
-  build-depends:       base >=4.7 && <4.8
+  build-depends:       base
                      , text
                      , bytestring
                      , attoparsec
@@ -27,7 +27,7 @@ test-suite spec
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  build-depends:       base >=4.7 && <4.8
+  build-depends:       base
                      , mqtt-broker
                      , bytestring
                      , attoparsec

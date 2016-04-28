@@ -86,7 +86,7 @@ data ConnectPacket
     , connectUserName         :: !(Maybe UserName)
     , connectPassword         :: !(Maybe Password)
     , connectCleanSession     :: !Bool
-    , connectKeepAlive        :: !(Maybe Word16)
+    , connectKeepAlive        :: !Word16
     } deriving (Eq, Show)
 
 data ConnackPacket
