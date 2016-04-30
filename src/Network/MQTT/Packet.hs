@@ -36,6 +36,16 @@ data QoS
   | QoS2
   deriving (Eq, Show)
 
+instance Enum QoS where
+  toEnum 0 = QoS0
+  toEnum 1 = QoS1
+  toEnum 2 = QoS2
+  toEnum _ = error "toEnum: wrong QoS level"
+
+  fromEnum QoS0 = 0
+  fromEnum QoS1 = 1
+  fromEnum QoS2 = 2
+
 newtype ClientIdentifier = ClientIdentifier { unClientIdentifier :: Text }
   deriving (Eq, Show)
 
