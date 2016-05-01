@@ -260,33 +260,48 @@ spec = do
 
     describe "SUBACK" $ do
       it "parses valid packet" $ do
-        pending
-
-      it "parses multiple return codes" $ do
-        pending
+        [0x90, 0x05, 0xab, 0x12, 0x00, 0x02, 0x80] `shouldParseAs`
+          SUBACK SubackPacket{ subackPacketIdentifier = PacketIdentifier 0xab12
+                             , subackResponses        = [Just QoS0, Just QoS2, Nothing]
+                             }
 
       it "fails on non-zero reserved field" $ do
-        pending
+        forM_ [0x91 .. 0x9f] $ \byte1 ->
+          shouldFailParsing [byte1]
 
-      it "fails on payload length less than 3" $ do
-        -- 2 bytes for variable header and at least one 1-byte return code
-        pending
+      it "fails on remaining length less than 3" $ do
+        -- 2 bytes for variable header and at least one 1-byte for return code
+        forM_ [0x00 .. 0x02] $ \len ->
+          shouldFailParsing [0x90, len]
 
       describe "return code" $ do
         it "QoS 0 is accepted" $ do
-          pending
+          [0x90, 0x03, 0xab, 0x12, 0x00] `shouldParseAs`
+            SUBACK SubackPacket{ subackPacketIdentifier = PacketIdentifier 0xab12
+                               , subackResponses        = [Just QoS0]
+                               }
 
         it "QoS 1 is accepted" $ do
-          pending
+          [0x90, 0x03, 0xab, 0x12, 0x01] `shouldParseAs`
+            SUBACK SubackPacket{ subackPacketIdentifier = PacketIdentifier 0xab12
+                               , subackResponses        = [Just QoS1]
+                               }
 
         it "QoS 2 is accepted" $ do
-          pending
+          [0x90, 0x03, 0xab, 0x12, 0x02] `shouldParseAs`
+            SUBACK SubackPacket{ subackPacketIdentifier = PacketIdentifier 0xab12
+                               , subackResponses        = [Just QoS2]
+                               }
 
         it "Failure is accepted" $ do
-          pending
+          [0x90, 0x03, 0xab, 0x12, 0x80] `shouldParseAs`
+            SUBACK SubackPacket{ subackPacketIdentifier = PacketIdentifier 0xab12
+                               , subackResponses        = [Nothing]
+                               }
 
         it "other return codes are rejected" $ do
-          pending
+          forM_ ([0x03 .. 0x7f] ++ [0x81 .. 0xff]) $ \returnCode ->
+            shouldFailParsing [0x90, 0x03, 0xab, 0x12, returnCode]
 
     describe "UNSUBSCRIBE" $ do
       it "parses valid packet" $ do

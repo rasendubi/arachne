@@ -14,7 +14,7 @@ import Data.Word (Word32, Word8)
 
 import Data.Text.Encoding (decodeUtf8')
 
-import Data.Attoparsec.ByteString (Parser, anyWord8, word8, take, (<?>))
+import Data.Attoparsec.ByteString (Parser, anyWord8, word8, take, (<?>), count)
 import Data.Attoparsec.Binary
 
 parsePacket :: Parser Packet
@@ -160,7 +160,33 @@ parseSubscribe :: Word8 -> Parser SubscribePacket
 parseSubscribe = undefined
 
 parseSuback :: Word8 -> Parser SubackPacket
-parseSuback = undefined
+parseSuback flags = do
+  assert (flags == 0x00) "Reserved bits MUST be set to zero"
+
+  len <- fromIntegral <$> remainingLength
+  assert (len > 2) "Remaining length is too short"
+
+  packetId <- packetIdentifier
+  responses <- count (len - 2) packetResponse
+
+  return SubackPacket
+    { subackPacketIdentifier = packetId
+    , subackResponses        = responses
+    }
+
+  where
+    packetResponse :: Parser (Maybe QoS)
+    packetResponse = do
+      response <- anyWord8
+      assert (response <= 0x02 || response == 0x80)
+        "SUBACK return codes other than 0x00, 0x01, 0x02 and 0x80 are reserved and MUST NOT be used "
+      return $
+        case response of
+          0x00 -> Just QoS0
+          0x01 -> Just QoS1
+          0x02 -> Just QoS2
+          0x80 -> Nothing
+          _    -> error "This could not happen"
 
 parseUnsubscribe :: Word8 -> Parser UnsubscribePacket
 parseUnsubscribe = undefined
