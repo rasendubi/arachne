@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Network.MQTT.Parser
   ( parsePacket
   , remainingLength
@@ -10,12 +11,53 @@ import Network.MQTT.Packet
 import Control.Monad (when)
 
 import Data.Bits ((.&.), (.|.), shiftR, shiftL, testBit, clearBit)
-import Data.Word (Word32, Word8)
+import Data.Word (Word32, Word16, Word8)
 
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+
+import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8')
 
-import Data.Attoparsec.ByteString (Parser, anyWord8, word8, take, (<?>), count)
+import Data.Attoparsec.ByteString (Parser, anyWord8, word8, take, string, count, (<?>))
 import Data.Attoparsec.Binary
+
+import qualified Control.Monad.Trans as T
+import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get, modify')
+
+--------------------------------------------------------------------------------
+
+-- | A parser monad that tracks remaining length.
+--
+-- It is used for complex packet types where it's hard to verify
+-- remaining length is correct beforehand.
+--
+-- Parser fails if remaining length is not enough.
+newtype ParserWithLength a =
+  ParserWithLength (StateT Word32 Parser a)
+  deriving (Functor, Applicative, Monad, MonadState Word32)
+
+runParserWithLength :: Word32 -> ParserWithLength a -> Parser a
+runParserWithLength l (ParserWithLength p) = evalStateT p l
+
+-- | Attaches length information to the normal parser.
+withLength :: Word32 -> Parser a -> ParserWithLength a
+withLength len p = do
+  curLen <- get
+  ParserWithLength . T.lift $ assert (len <= curLen) "Length is not enough to parse message"
+  modify' (subtract len)
+  ParserWithLength $ T.lift p
+
+anyWord16be' :: ParserWithLength Word16
+anyWord16be' = withLength 2 anyWord16be
+
+anyWord8' :: ParserWithLength Word8
+anyWord8' = withLength 1 anyWord8
+
+take' :: Int -> ParserWithLength ByteString
+take' len = withLength (fromIntegral len) (take len)
+
+--------------------------------------------------------------------------------
 
 parsePacket :: Parser Packet
 parsePacket = do
@@ -61,9 +103,6 @@ remainingLength = foldr1 (\x acc -> (acc `shiftL` 7) .|. x) <$> takeBytes 0
       else
         return [byte]
 
-packetIdentifier :: Parser PacketIdentifier
-packetIdentifier = PacketIdentifier <$> anyWord16be
-
 assert :: Bool -> String -> Parser ()
 assert cond reason = when (not cond) $ fail reason
 
@@ -71,7 +110,48 @@ parseConnect :: Word8 -> Parser ConnectPacket
 parseConnect flags = do
   assert (flags == 0) "Reserved bits MUST be set to zero"
   len <- remainingLength
-  undefined
+  assert (len >= 10) "Remaining length is too short"
+
+  _ <- string $ BS.pack [0x00, 0x04, 0x4d, 0x51, 0x54, 0x54]
+
+  protocolLevel <- anyWord8
+
+  cflags <- anyWord8
+  let userNameFlag = cflags `testBit` 7
+      passwordFlag = cflags `testBit` 6
+      willRetain   = cflags `testBit` 5
+      willQoS      = (cflags .&. 0x18) `shiftR` 3
+      willFlag     = cflags `testBit` 2
+      cleanSession = cflags `testBit` 1
+      reservedBit  = cflags `testBit` 0
+
+  assert (not reservedBit) "Reserved bit MUST be set to zero"
+  assert (not $ not userNameFlag && passwordFlag)
+    "MQTT-3.1.2-22: If the User Name Flag is set to 0, the Password Flag MUST be set to 0"
+  assert (not $ not willFlag && (willQoS /= 0 || willRetain))
+    "MQTT-3.1.2-11: If the Will Flag is set to 0 the Will QoS and Will Retain fields in the Connect Flags MUST be set to zero"
+  assert (willQoS /= 3)
+    "MQTT-3.1.2-14: If the Will Flag is set to 1, the value of Will QoS can be 0 (0x00), 1 (0x01), or 2 (0x02). It MUST NOT be 3 (0x03)"
+
+  keepAlive <- anyWord16be
+
+  runParserWithLength (len - 10) $ do
+    clientId <- parseClientIdentifier
+    willMsg <- maybeM willFlag $ do
+        willTopic <- parseText
+        willMessage <- parseByteString
+        return $ Message (toEnum $ fromIntegral willQoS) willRetain (Topic willTopic) willMessage
+    userName <- maybeM userNameFlag (UserName <$> parseText)
+    password <- maybeM passwordFlag (Password <$> parseByteString)
+
+    return ConnectPacket{ connectClientIdentifier = clientId
+                        , connectProtocolLevel = protocolLevel
+                        , connectWillMsg = willMsg
+                        , connectUserName = userName
+                        , connectPassword = password
+                        , connectCleanSession = cleanSession
+                        , connectKeepAlive = keepAlive
+                        }
 
 parseConnack :: Word8 -> Parser ConnackPacket
 parseConnack flags = do
@@ -97,9 +177,9 @@ parseConnack flags = do
 
 parsePublish :: Word8 -> Parser PublishPacket
 parsePublish flags = do
-  let dupFlag     = flags .&. 0x8 /= 0
+  let dupFlag     = flags `testBit` 3
       qosLevel    = (flags .&. 0x6) `shiftR` 1
-      retainFlag  = flags .&. 0x1 /= 0
+      retainFlag  = flags `testBit` 0
       packetIdLen = if qosLevel /= 0 then 2 else 0
 
   assert (qosLevel /= 3)
@@ -120,9 +200,7 @@ parsePublish flags = do
 
   Right topic <- decodeUtf8' <$> take topicLen
 
-  packetId <- if qosLevel == 0
-              then return Nothing
-              else Just <$> packetIdentifier
+  packetId <- maybeM (qosLevel /= 0) packetIdentifier
 
   payload <- take payloadLength
 
@@ -157,7 +235,20 @@ parsePubcomp flags = do
   PubcompPacket <$> packetIdentifier
 
 parseSubscribe :: Word8 -> Parser SubscribePacket
-parseSubscribe = undefined
+parseSubscribe flags = do
+  assert (flags == 0x2) "Reserved bits MUST be set to 2"
+  len <- remainingLength
+  assert (len >= 5) "The minimum remaining length is 5"
+  runParserWithLength len $ do
+    packetId <- PacketIdentifier <$> anyWord16be'
+
+    topicFilters <- parseTillEnd $ do
+      topicFilter <- parseTopicFilter
+      qosLevel <- fromIntegral <$> anyWord8'
+      withLength 0 $ assert (qosLevel <= 0x2) "Invalid QoS level"
+      return (topicFilter, toEnum qosLevel)
+
+    return $ SubscribePacket packetId topicFilters
 
 parseSuback :: Word8 -> Parser SubackPacket
 parseSuback flags = do
@@ -189,7 +280,16 @@ parseSuback flags = do
           _    -> error "This could not happen"
 
 parseUnsubscribe :: Word8 -> Parser UnsubscribePacket
-parseUnsubscribe = undefined
+parseUnsubscribe flags = do
+  assert (flags == 0x2) "Reserved bits MUST be set to 2"
+
+  len <- remainingLength
+  assert (len >= 4) "Remaining length is too short"
+
+  runParserWithLength len $ do
+    packetId <- withLength 2 packetIdentifier
+    filters <- parseTillEnd parseTopicFilter
+    return $ UnsubscribePacket packetId filters
 
 parseUnsuback :: Word8 -> Parser UnsubackPacket
 parseUnsuback flags = do
@@ -214,3 +314,34 @@ parseDisconnect flags = do
   assert (flags == 0) "MQTT-3.14.1-1: Reserved bits MUST be set to zero"
   _ <- word8 0 <?> "DISCONNECT packet MUST have no payload"
   return DisconnectPacket
+
+
+packetIdentifier :: Parser PacketIdentifier
+packetIdentifier = PacketIdentifier <$> anyWord16be
+
+parseClientIdentifier :: ParserWithLength ClientIdentifier
+parseClientIdentifier = ClientIdentifier <$> parseText
+
+parseTillEnd :: ParserWithLength a -> ParserWithLength [a]
+parseTillEnd p = do
+  len <- get
+  if len == 0
+    then return []
+    else (:) <$> p <*> parseTillEnd p
+
+parseTopicFilter :: ParserWithLength TopicFilter
+parseTopicFilter = TopicFilter <$> parseText
+
+parseText :: ParserWithLength Text
+parseText = do
+  Right text <- decodeUtf8' <$> parseByteString
+  return text
+
+parseByteString :: ParserWithLength ByteString
+parseByteString = do
+  len <- anyWord16be'
+  take' (fromIntegral len)
+
+maybeM :: Monad m => Bool -> m a -> m (Maybe a)
+maybeM True  p = Just <$> p
+maybeM False _ = return Nothing
