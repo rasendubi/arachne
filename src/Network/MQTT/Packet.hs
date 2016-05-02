@@ -26,7 +26,7 @@ module Network.MQTT.Packet
   , TopicFilter(..)
   ) where
 
-import Data.Word (Word16)
+import Data.Word (Word16, Word8)
 import Data.Text (Text)
 import Data.ByteString (ByteString)
 
@@ -92,6 +92,7 @@ data Packet
 data ConnectPacket
   = ConnectPacket
     { connectClientIdentifier :: !ClientIdentifier
+    , connectProtocolLevel    :: !Word8
     , connectWillMsg          :: !(Maybe Message)
     , connectUserName         :: !(Maybe UserName)
     , connectPassword         :: !(Maybe Password)

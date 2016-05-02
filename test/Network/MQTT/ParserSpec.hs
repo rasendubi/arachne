@@ -33,7 +33,42 @@ spec = do
 
     describe "CONNECT" $ do
       it "parses valid packet" $ do
-        pending
+        [0x10,
+         -- remaining length = 33 bytes
+         33,
+         -- protocol name = MQTT
+         0x00, 0x04, 0x4d, 0x51, 0x54, 0x54,
+         -- protocol level = 4
+         0x04,
+         -- username = 1
+         -- password = 1
+         -- retain   = 0
+         -- willqos  = 01
+         -- will     = 1
+         -- clean    = 1
+         -- reserved = 0
+         0xce,
+         -- keep alie = 0x000c
+         0x00, 0x0c,
+         -- client id = "abc"
+         0x00, 0x03, 0x61, 0x62, 0x63,
+         -- topic name = "a/b"
+         0x00, 0x03, 0x61, 0x2f, 0x62,
+         -- will message = [0x12, 0xab]
+         0x00, 0x02, 0x12, 0xab,
+         -- username = "ac"
+         0x00, 0x02, 0x61, 0x63,
+         -- password = [0xcd, 0xbb, 0x11]
+         0x00, 0x03, 0xcd, 0xbb, 0x11] `shouldParseAs`
+          CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier (T.pack "abc")
+                               , connectProtocolLevel = 0x04
+                               , connectWillMsg = Just $
+                                   Message QoS1 False (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab])
+                               , connectUserName = Just (UserName $ T.pack "ac")
+                               , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
+                               , connectCleanSession = True
+                               , connectKeepAlive = 0x000c
+                               }
 
       it "parses unknown protocol level" $ do
         -- MQTTT-3.1.2-2: The Server MUST respond to the CONNECT
@@ -43,35 +78,75 @@ spec = do
         --
         -- That means we should successfully parse packets with
         -- unknown protocol levels to let server respond to them.
-        pending
+        [0x10,
+         -- remaining length = 33 bytes
+         33,
+         -- protocol name = MQTT
+         0x00, 0x04, 0x4d, 0x51, 0x54, 0x54,
+         -- protocol level = 0xf1
+         0xf1,
+         -- username = 1
+         -- password = 1
+         -- retain   = 0
+         -- willqos  = 01
+         -- will     = 1
+         -- clean    = 1
+         -- reserved = 0
+         0xce,
+         -- keep alie = 0x000c
+         0x00, 0x0c,
+         -- client id = "abc"
+         0x00, 0x03, 0x61, 0x62, 0x63,
+         -- topic name = "a/b"
+         0x00, 0x03, 0x61, 0x2f, 0x62,
+         -- will message = [0x12, 0xab]
+         0x00, 0x02, 0x12, 0xab,
+         -- username = "ac"
+         0x00, 0x02, 0x61, 0x63,
+         -- password = [0xcd, 0xbb, 0x11]
+         0x00, 0x03, 0xcd, 0xbb, 0x11] `shouldParseAs`
+          CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier (T.pack "abc")
+                               , connectProtocolLevel = 0xf1
+                               , connectWillMsg = Just $
+                                   Message QoS1 False (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab])
+                               , connectUserName = Just (UserName $ T.pack "ac")
+                               , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
+                               , connectCleanSession = True
+                               , connectKeepAlive = 0x000c
+                               }
 
       it "fails on non-zero reserved field" $ do
-        pending
+        forM_ [0x1 .. 0xf] $ \flags ->
+          shouldFailParsing [0x10 .|. flags]
 
       it "fails on remaining length less than 10" $ do
         -- 10-bytes variable header
-        pending
+        forM_ [0x00 .. 0x09] $ \len ->
+          shouldFailParsing [0x10, len]
 
       it "fails if protocol name doesn't match" $ do
-        pending
+        -- valid sequence is [0x01, 0x0a, 0x00, 0x04, 0x4d, 0x51, 0x54, 0x54]
+        shouldFailParsing [0x10, 0x0a, 0x01]
+        shouldFailParsing [0x10, 0x0a, 0x00, 0x03]
+        shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x01]
+        shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x4d, 0x53]
+        shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x4d, 0x51, 0x53]
+        shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x4d, 0x51, 0x54, 0x52]
 
       it "MQTT-3.1.2-3: The Server MUST validate that the reserved flag in the CONNECT Control Packet is set to zero and disconnect the Client if it is not zero" $ do
-        pending
+        forM_ [0x01, 0x3 .. 0xff] $ \flags ->
+          shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, 0x04, flags]
 
       it "MQTT-3.1.2-11: If the Will Flag is set to 0 the Will QoS and Will Retain fields in the Connect Flags MUST be set to zero" $ do
-        pending
-
-      it "MQTT-3.1.2-13: If the Will Flag is set to 0, then the Will QoS MUST be set to 0 (0x00)" $ do
-        pending
+        forM_ [0x01 .. 0x07] $ \bits ->
+          shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, 0x04, bits `shiftL` 3]
 
       it "MQTT-3.1.2-14: If the Will Flag is set to 1, the value of Will QoS can be 0 (0x00), 1 (0x01), or 2 (0x02). It MUST NOT be 3 (0x03)" $ do
-        pending
-
-      it "MQTT-3.1.2-15: If the Will Flag is set to 0, then the Will Retain Flag MUST be set to 0" $ do
-        pending
+        -- 0x1c == 0b00011100
+        shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, 0x04, 0x1c]
 
       it "MQTT-3.1.2-22: If the User Name Flag is set to 0, the Password Flag MUST be set to 0" $  do
-        pending
+        shouldFailParsing [0x10, 0x0a, 0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, 0x04, 0x40]
 
       it "MQTT-3.1.3-5: The Server MUST allow ClientIds which are between 1 and 23 UTF-8 encoded bytes in length, and that contain only the characters \"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\"" $ do
         -- The Server MAY allow ClientId’s that contain more than 23
@@ -80,22 +155,86 @@ spec = do
         pending
 
       it "MQTT-3.1.3-6: A Server MAY allow a Client to supply a ClientId that has a length of zero bytes, however if it does so the Server MUST treat this as a special case and assign a unique ClientId to that Client" $ do
-        pending
+        [0x10,
+         -- remaining length = 30 bytes
+         30,
+         -- protocol name = MQTT
+         0x00, 0x04, 0x4d, 0x51, 0x54, 0x54,
+         -- protocol level = 0xf1
+         0x04,
+         -- username = 1
+         -- password = 1
+         -- retain   = 0
+         -- willqos  = 01
+         -- will     = 1
+         -- clean    = 1
+         -- reserved = 0
+         0xce,
+         -- keep alie = 0x000c
+         0x00, 0x0c,
+         -- client id = ""
+         0x00, 0x00,
+         -- topic name = "a/b"
+         0x00, 0x03, 0x61, 0x2f, 0x62,
+         -- will message = [0x12, 0xab]
+         0x00, 0x02, 0x12, 0xab,
+         -- username = "ac"
+         0x00, 0x02, 0x61, 0x63,
+         -- password = [0xcd, 0xbb, 0x11]
+         0x00, 0x03, 0xcd, 0xbb, 0x11] `shouldParseAs`
+          CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier T.empty
+                               , connectProtocolLevel = 0x04
+                               , connectWillMsg = Just $
+                                   Message QoS1 False (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab])
+                               , connectUserName = Just (UserName $ T.pack "ac")
+                               , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
+                               , connectCleanSession = True
+                               , connectKeepAlive = 0x000c
+                               }
 
       it "MQTT-3.1.3-8: If the Client supplies a zero-byte ClientId with CleanSession set to 0, the Server MUST respond to the CONNECT Packet with a CONNACK return code 0x02 (Identifier rejected) and then close the Network Connection" $ do
         -- that means, packet should parse successfuly
-        pending
+        [0x10,
+         -- remaining length = 30 bytes
+         30,
+         -- protocol name = MQTT
+         0x00, 0x04, 0x4d, 0x51, 0x54, 0x54,
+         -- protocol level = 0xf1
+         0x04,
+         -- username = 1
+         -- password = 1
+         -- retain   = 0
+         -- willqos  = 01
+         -- will     = 1
+         -- clean    = 0
+         -- reserved = 0
+         0xcc,
+         -- keep alie = 0x000c
+         0x00, 0x0c,
+         -- client id = ""
+         0x00, 0x00,
+         -- topic name = "a/b"
+         0x00, 0x03, 0x61, 0x2f, 0x62,
+         -- will message = [0x12, 0xab]
+         0x00, 0x02, 0x12, 0xab,
+         -- username = "ac"
+         0x00, 0x02, 0x61, 0x63,
+         -- password = [0xcd, 0xbb, 0x11]
+         0x00, 0x03, 0xcd, 0xbb, 0x11] `shouldParseAs`
+          CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier T.empty
+                               , connectProtocolLevel = 0x04
+                               , connectWillMsg = Just $
+                                   Message QoS1 False (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab])
+                               , connectUserName = Just (UserName $ T.pack "ac")
+                               , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
+                               , connectCleanSession = False
+                               , connectKeepAlive = 0x000c
+                               }
 
       it "MQTT-3.1.3-10: The Will Topic MUST be a UTF-8 encoded string as defined in Section 1.5.3" $ do
         pending
 
       it "MQTT-3.1.3-11: The User Name MUST be a UTF-8 encoded string as defined in Section 1.5.3" $ do
-        pending
-
-      it "parses packet with password" $ do
-        pending
-
-      it "parses packet with password" $ do
         pending
 
     describe "CONNACK" $ do
@@ -241,22 +380,34 @@ spec = do
 
     describe "SUBSCRIBE" $ do
       it "parses valid packet" $ do
-        pending
+        [0x82, 0x0e, 0x12, 0xab,
+         0x00, 0x03, 0x61, 0x2f, 0x62, 0x01,
+         0x00, 0x03, 0x63, 0x2f, 0x64, 0x02] `shouldParseAs`
+          SUBSCRIBE (SubscribePacket
+                     (PacketIdentifier 0x12ab)
+                     [ (TopicFilter $ T.pack "a/b", QoS1)
+                     , (TopicFilter $ T.pack "c/d", QoS2)
+                     ])
+
 
       it "MQTT-3.8.1-1: Bits 3,2,1 and 0 of the fixed header of the SUBSCRIBE Control Packet are reserved and MUST be set to 0,0,1 and 0 respectively. The Server MUST treat any other value as malformed and close the Network Connection" $ do
-        pending
+        forM_ ([0x0 .. 0x1] ++ [0x3 .. 0xf]) $ \flags ->
+          shouldFailParsing [0x80 .|. flags]
 
       it "fails when remaining length is less than 5" $ do
         -- 2 for packet identifier
         -- 2 for topic filter length
         -- 1 for desired QoS
-        pending
+        forM_ [0x00 .. 0x04] $ \len ->
+          shouldFailParsing [0x82, len]
 
       it "MQTT-3.8.3-1: The Topic Filters in a SUBSCRIBE packet payload MUST be UTF-8 encoded strings as defined in Section 1.5.3" $ do
         pending
 
       it "MQTT-3.8.3-4: The Server MUST treat a SUBSCRIBE packet as malformed and close the Network Connection if any of Reserved bits in the payload are non-zero, or QoS is not 0,1 or 2" $ do
-        pending
+        forM_ [0x03 .. 0xff] $ \flags ->
+          shouldFailParsing [0x82, 0x0e, 0x12, 0xab,
+                             0x00, 0x03, 0x63, 0x2f, 0x64, flags]
 
     describe "SUBACK" $ do
       it "parses valid packet" $ do
@@ -305,24 +456,22 @@ spec = do
 
     describe "UNSUBSCRIBE" $ do
       it "parses valid packet" $ do
-        pending
+        [0xa2, 0x0c, 0x12, 0xab,
+         0x00, 0x03, 0x61, 0x2f, 0x62,
+         0x00, 0x03, 0x63, 0x2f, 0x64] `shouldParseAs`
+          UNSUBSCRIBE (UnsubscribePacket
+                       (PacketIdentifier 0x12ab)
+                       (fmap (TopicFilter . T.pack) ["a/b", "c/d"]))
 
       it "fails on non-two flags" $ do
-        pending
+        forM_ ([0x0 .. 0x1] ++ [0x3 .. 0xf]) $ \flags ->
+          shouldFailParsing [0xa0 .|. flags]
 
       it "fails on length less than 4" $ do
         -- two bytes for variable header plus two bytes for at least
         -- one topic length
-        pending
-
-      it "fails on zero topics" $ do
-        pending
-
-      it "fails if payload length is not enough to read string" $ do
-        pending
-
-      it "fails if payload length is not enough to read length of the topic" $ do
-        pending
+        forM_ [0x00 .. 0x03] $ \len ->
+          shouldFailParsing [0xa2, len]
 
       it "fails on non-valid utf-8" $ do
         pending
