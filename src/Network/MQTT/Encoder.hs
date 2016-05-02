@@ -45,7 +45,7 @@ variableHeader _                                   = mempty
 encodeConnectVariableHeader :: ConnectPacket -> Builder
 encodeConnectVariableHeader ConnectPacket{..} = mconcat
                                                   [ encodeText "MQTT"
-                                                  , word8 4
+                                                  , word8 connectProtocolLevel
                                                   , word8 flags
                                                   , word16BE connectKeepAlive
                                                   ]
@@ -143,7 +143,7 @@ packetTypeValue (PINGRESP _)    = 13
 packetTypeValue (DISCONNECT _)  = 14
 
 flagBits :: Packet -> Word8
-flagBits (PUBREC _)      = 2
+flagBits (PUBREL _)      = 2
 flagBits (SUBSCRIBE _)   = 2
 flagBits (UNSUBSCRIBE _) = 2
 flagBits (PUBLISH publishPacket) =
