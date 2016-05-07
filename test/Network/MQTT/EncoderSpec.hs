@@ -14,6 +14,7 @@ import           Test.SmallCheck.Series.Instances ()
 import           Data.Attoparsec.ByteString       (parseOnly)
 import           Data.ByteString.Builder          (toLazyByteString)
 import           Data.ByteString.Lazy             (toStrict)
+import qualified Data.Text as T
 import           Data.Maybe                       (isNothing, isJust)
 
 spec :: Spec
@@ -31,7 +32,8 @@ valid packet = case packet of
   CONNACK ConnackPacket{..}         -> not (connackReturnCode /= Accepted && connackSessionPresent)
   PUBLISH PublishPacket{..}         ->
     not ((messageQoS publishMessage /= QoS0 && isNothing publishPacketIdentifier) ||
-         (messageQoS publishMessage == QoS0 && (publishDup || isJust publishPacketIdentifier)))
+         (messageQoS publishMessage == QoS0 && (publishDup || isJust publishPacketIdentifier)) ||
+         (T.null . unTopic $ messageTopic publishMessage))
   CONNECT ConnectPacket{..}         -> not (isNothing connectUserName && isJust connectPassword)
   _                                 -> True
 

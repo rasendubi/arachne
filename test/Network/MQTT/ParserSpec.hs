@@ -305,10 +305,21 @@ spec = do
         shouldFailParsing [0x34, 0x03]
 
       it "MQTT-3.3.2-1: Topic Name MUST be a UTF-8 encoded string" $ do
-        pending
+        -- 0xff is non-valid utf-8 character
+        shouldFailParsing [0x30, 0x03, 0x00, 0x01, 0xff]
 
       it "MQTT-3.3.2-2: The Topic Name in the PUBLISH Packet MUST NOT contain wildcard characters" $ do
-        pending
+        -- a/#
+        shouldFailParsing [0x30, 0x05, 0x00, 0x03, 0x61, 0x2f, 0x23]
+        -- a/+
+        shouldFailParsing [0x30, 0x05, 0x00, 0x03, 0x61, 0x2f, 0x2b]
+
+      it "MQTT-4.7.3-2: Topic Names and Topic Filters MUST NOT include the null character (Unicode U+0000)" $ do
+        -- a/\0
+        shouldFailParsing [0x30, 0x05, 0x00, 0x03, 0x61, 0x2f, 0x00]
+
+      it "MQTT-4.7.3-1: All Topic Names and Topic Filters MUST be at least one character long" $ do
+        shouldFailParsing [0x30, 0x02, 0x00, 0x00]
 
       it "fails if remaining length is not enough to read topic name" $ do
         -- QoS 0, topic name is 3 bytes long. Remaining length should

@@ -9,6 +9,7 @@ import Prelude hiding (take)
 import Network.MQTT.Packet
 
 import Control.Monad (when)
+import Data.Maybe (isNothing)
 
 import Data.Bits ((.&.), (.|.), shiftR, shiftL, testBit, clearBit)
 import Data.Word (Word32, Word16, Word8)
@@ -17,6 +18,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8')
 
 import Data.Attoparsec.ByteString (Parser, anyWord8, word8, take, string, count, (<?>))
@@ -198,7 +200,7 @@ parsePublish flags = do
 
   let payloadLength = len - 2 - topicLen - packetIdLen
 
-  Right topic <- decodeUtf8' <$> take topicLen
+  topic <- toTopicName =<< take topicLen
 
   packetId <- maybeM (qosLevel /= 0) packetIdentifier
 
@@ -206,7 +208,7 @@ parsePublish flags = do
 
   return PublishPacket
     { publishDup = dupFlag
-    , publishMessage = Message (toEnum $ fromIntegral qosLevel) retainFlag (Topic topic) payload
+    , publishMessage = Message (toEnum $ fromIntegral qosLevel) retainFlag topic payload
     , publishPacketIdentifier = packetId
     }
 
@@ -341,6 +343,32 @@ parseByteString :: ParserWithLength ByteString
 parseByteString = do
   len <- anyWord16be'
   take' (fromIntegral len)
+
+-- | Converts a ByteString to the topic name. Fails if ByteString is
+-- not valid Topic Name.
+--
+-- MQTT-4.7.1-1: The wildcard characters can be used in Topic Filters,
+-- but MUST NOT be used within a Topic Name.
+--
+-- MQTT-4.7.3-1: All Topic Names and Topic Filters MUST be at least
+-- one character long.
+--
+-- MQTT-4.7.3-2: Topic Names and Topic Filters MUST NOT include the
+-- null character (Unicode U+0000).
+--
+-- MQTT-4.7.3-3: Topic Names and Topic Filters are UTF-8 encoded
+-- strings, they MUST NOT encode to more than 65535 bytes.
+toTopicName :: ByteString -> Parser Topic
+toTopicName bs = do
+  assert (BS.length bs >= 1)
+    "MQTT-4.7.3-1: All Topic Names MUST be at least one character long"
+  assert (BS.length bs <= 65535)
+    "MQTT-4.7.3-3: Topic Names MUST NOT encode to more than 65535 bytes"
+  Right t <- return (decodeUtf8' bs) <?>
+    "MQTT-4.7.3-3: Topic Names are UTF-8 encoded strings"
+  assert (isNothing $ T.find (\c -> c == '#' || c == '+' || c == '\0') t)
+    "Topic name can't include wildcard or null character"
+  return $ Topic t
 
 maybeM :: Monad m => Bool -> m a -> m (Maybe a)
 maybeM True  p = Just <$> p
