@@ -22,7 +22,7 @@ import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8')
 
 import Data.Attoparsec.ByteString (Parser, anyWord8, word8, take, string, count, (<?>))
-import Data.Attoparsec.Binary
+import Data.Attoparsec.Binary (anyWord16be)
 
 import qualified Control.Monad.Trans as T
 import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get, modify')
