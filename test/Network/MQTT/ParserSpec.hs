@@ -201,7 +201,7 @@ spec = do
            -- client id
            0x00, fromIntegral (length clientId)]
            ++
-           (fromIntegral . fromEnum <$> clientId)
+           (toWord8 <$> clientId)
            ++
            -- topic name = "a/b"
            [0x00, 0x03, 0x61, 0x2f, 0x62,
@@ -353,6 +353,53 @@ spec = do
               -- invalid user name
             , 0x00, 0x01, userName
             ]
+
+      it "Will topic should not contain wildcards" $ do
+        shouldFailParsing
+          [0x10,
+           -- remaining length = 33 bytes
+           33,
+           -- protocol name = MQTT
+           0x00, 0x04, 0x4d, 0x51, 0x54, 0x54,
+           -- protocol level = 4
+           0x04,
+           -- username = 1
+           -- password = 1
+           -- retain   = 0
+           -- willqos  = 01
+           -- will     = 1
+           -- clean    = 1
+           -- reserved = 0
+           0xce,
+           -- keep alie = 0x000c
+           0x00, 0x0c,
+           -- client id = "abc"
+           0x00, 0x03, 0x61, 0x62, 0x63,
+           -- topic name = "a/+"
+           0x00, 0x03, 0x61, 0x2f, toWord8 '+']
+
+        shouldFailParsing
+          [0x10,
+           -- remaining length = 33 bytes
+           33,
+           -- protocol name = MQTT
+           0x00, 0x04, 0x4d, 0x51, 0x54, 0x54,
+           -- protocol level = 4
+           0x04,
+           -- username = 1
+           -- password = 1
+           -- retain   = 0
+           -- willqos  = 01
+           -- will     = 1
+           -- clean    = 1
+           -- reserved = 0
+           0xce,
+           -- keep alie = 0x000c
+           0x00, 0x0c,
+           -- client id = "abc"
+           0x00, 0x03, 0x61, 0x62, 0x63,
+           -- topic name = "a/#"
+           0x00, 0x03, 0x61, 0x2f, toWord8 '#']
 
     describe "CONNACK" $ do
       it "parses valid packet" $ do
@@ -517,6 +564,16 @@ spec = do
                      , (TopicFilter $ T.pack "c/d", QoS2)
                      ])
 
+      it "parses packets that start and end on separator" $ do
+        [0x82, 0x0e, 0x12, 0xab,
+         0x00, 0x03, toWord8 '/', toWord8 'a', toWord8 '/', 0x01,
+         0x00, 0x03, toWord8 '/', toWord8 '/', toWord8 '/', 0x02] `shouldParseAs`
+          SUBSCRIBE (SubscribePacket
+                     (PacketIdentifier 0x12ab)
+                     [ (TopicFilter $ T.pack "/a/", QoS1)
+                     , (TopicFilter $ T.pack "///", QoS2)
+                     ])
+
 
       it "MQTT-3.8.1-1: Bits 3,2,1 and 0 of the fixed header of the SUBSCRIBE Control Packet are reserved and MUST be set to 0,0,1 and 0 respectively. The Server MUST treat any other value as malformed and close the Network Connection" $ do
         forM_ ([0x0 .. 0x1] ++ [0x3 .. 0xf]) $ \flags ->
@@ -537,6 +594,50 @@ spec = do
         forM_ [0x03 .. 0xff] $ \flags ->
           shouldFailParsing [0x82, 0x0e, 0x12, 0xab,
                              0x00, 0x03, 0x63, 0x2f, 0x64, flags]
+
+      it "MQTT-4.7.1-2: The multi-level wildcard MUST be the last character specified in the Topic Filter" $ do
+        shouldFailParsing [0x82, 0x0e, 0x12, 0xab,
+                           -- #/a
+                           0x00, 0x03, toWord8 '#', toWord8 '/', toWord8 'a']
+
+        shouldFailParsing [0x82, 0x08, 0x12, 0xab,
+                           0x00, 0x03, toWord8 'a', toWord8 'b', toWord8 '#']
+
+        [0x82, 0x08, 0x12, 0xab,
+         0x00, 0x03, toWord8 'a', toWord8 '/', toWord8 '#', 0x01] `shouldParseAs`
+          SUBSCRIBE (SubscribePacket
+                     (PacketIdentifier 0x12ab)
+                     [ (TopicFilter $ T.pack "a/#", QoS1) ])
+
+      it "MQTT-4.7.1-3: The single-level wildcard MUST occupy an entire level of the filter" $ do
+        shouldFailParsing [0x82, 0x08, 0x12, 0xab,
+                           0x00, 0x03, toWord8 '/', toWord8 'b', toWord8 '+']
+
+        [0x82, 0x08, 0x12, 0xab,
+         0x00, 0x03, toWord8 'a', toWord8 '/', toWord8 '+', 0x01] `shouldParseAs`
+          SUBSCRIBE (SubscribePacket
+                     (PacketIdentifier 0x12ab)
+                     [ (TopicFilter $ T.pack "a/+", QoS1) ])
+
+        [0x82, 0x08, 0x12, 0xab,
+         0x00, 0x03, toWord8 '+', toWord8 '/', toWord8 'b', 0x01] `shouldParseAs`
+          SUBSCRIBE (SubscribePacket
+                     (PacketIdentifier 0x12ab)
+                     [ (TopicFilter $ T.pack "+/b", QoS1) ])
+
+      it "MQTT-4.7.3-1: All Topic Filters MUST be at least one character long" $ do
+        shouldFailParsing [0x82, 0x08, 0x12, 0xab,
+                           0x00, 0x00]
+
+        [0x82, 0x06, 0x12, 0xab,
+         0x00, 0x01, toWord8 'a', 0x01] `shouldParseAs`
+          SUBSCRIBE (SubscribePacket
+                     (PacketIdentifier 0x12ab)
+                     [ (TopicFilter $ T.pack "a", QoS1) ])
+
+      it "MQTT-4.7.3-2: Topic Filters MUST NOT include the null character (Unicode U+0000)" $ do
+        shouldFailParsing [0x82, 0x08, 0x12, 0xab,
+                           0x00, 0x02, toWord8 '/', toWord8 '\0']
 
     describe "SUBACK" $ do
       it "parses valid packet" $ do
@@ -667,3 +768,6 @@ spec = do
 
     it "fails fast on too long field" $ do
       parse remainingLength (BS.pack [0xff, 0xff, 0xff, 0xff]) `shouldSatisfy` isParseFail
+
+toWord8 :: Enum a => a -> Word8
+toWord8 = fromIntegral . fromEnum
