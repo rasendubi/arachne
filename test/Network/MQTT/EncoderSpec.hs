@@ -26,9 +26,13 @@ spec = do
 
 valid :: Packet -> Bool
 valid packet = case packet of
-  SUBSCRIBE SubscribePacket{..}     -> not $ null subscribeTopicFiltersQoS
+  SUBSCRIBE SubscribePacket{..}     ->
+    not (null subscribeTopicFiltersQoS) &&
+    all (not . T.null . unTopicFilter . fst) subscribeTopicFiltersQoS
   SUBACK SubackPacket{..}           -> not $ null subackResponses
-  UNSUBSCRIBE UnsubscribePacket{..} -> not $ null unsubscribeTopicFilters
+  UNSUBSCRIBE UnsubscribePacket{..} ->
+    not (null unsubscribeTopicFilters) &&
+    all (not . T.null. unTopicFilter) unsubscribeTopicFilters
   CONNACK ConnackPacket{..}         -> not (connackReturnCode /= Accepted && connackSessionPresent)
   PUBLISH PublishPacket{..}         ->
     not ((messageQoS publishMessage /= QoS0 && isNothing publishPacketIdentifier) ||

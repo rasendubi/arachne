@@ -122,7 +122,7 @@ parseConnect flags = do
   let userNameFlag = cflags `testBit` 7
       passwordFlag = cflags `testBit` 6
       willRetain   = cflags `testBit` 5
-      willQoS      = (cflags .&. 0x18) `shiftR` 3
+      willQoS      = cflags `shiftR` 3 .&. 0x03
       willFlag     = cflags `testBit` 2
       cleanSession = cflags `testBit` 1
       reservedBit  = cflags `testBit` 0
@@ -140,9 +140,9 @@ parseConnect flags = do
   runParserWithLength (len - 10) $ do
     clientId <- parseClientIdentifier
     willMsg <- maybeM willFlag $ do
-        willTopic <- parseText
-        willMessage <- parseByteString
-        return $ Message (toEnum $ fromIntegral willQoS) willRetain (Topic willTopic) willMessage
+      willTopic <- withLength 0 . toTopicName =<< parseByteString
+      willMessage <- parseByteString
+      return $ Message (toEnum $ fromIntegral willQoS) willRetain willTopic willMessage
     userName <- maybeM userNameFlag (UserName <$> parseText)
     password <- maybeM passwordFlag (Password <$> parseByteString)
 
@@ -180,7 +180,7 @@ parseConnack flags = do
 parsePublish :: Word8 -> Parser PublishPacket
 parsePublish flags = do
   let dupFlag     = flags `testBit` 3
-      qosLevel    = (flags .&. 0x6) `shiftR` 1
+      qosLevel    = flags `shiftR` 1 .&. 0x03
       retainFlag  = flags `testBit` 0
       packetIdLen = if qosLevel /= 0 then 2 else 0
 
@@ -332,7 +332,7 @@ parseTillEnd p = do
     else (:) <$> p <*> parseTillEnd p
 
 parseTopicFilter :: ParserWithLength TopicFilter
-parseTopicFilter = TopicFilter <$> parseText
+parseTopicFilter = withLength 0 . toTopicFilter =<< parseByteString
 
 parseText :: ParserWithLength Text
 parseText = do
@@ -369,6 +369,45 @@ toTopicName bs = do
   assert (isNothing $ T.find (\c -> c == '#' || c == '+' || c == '\0') t)
     "Topic name can't include wildcard or null character"
   return $ Topic t
+
+-- | Converts a ByteString to the topic filter. Fails if ByteString is
+-- not a valid Topic Filter.
+--
+-- MQTT-4.7.1-2: The multi-level wildcard character MUST be specified
+-- either on its own or following a topic level separator. In either
+-- case it MUST be the last character specified in the Topic Filter.
+--
+-- MQTT-4.7.1-3: The single-level wildcard can be used at any level in
+-- the Topic Filter, including first and last levels. Where it is used
+-- it MUST occupy an entire level of the filter.
+--
+-- MQTT-4.7.3-1: All Topic Names and Topic Filters MUST be at least
+-- one character long.
+--
+-- MQTT-4.7.3-2: Topic Names and Topic Filters MUST NOT include the
+-- null character (Unicode U+0000).
+--
+-- MQTT-4.7.3-3: Topic Names and Topic Filters are UTF-8 encoded
+-- strings, they MUST NOT encode to more than 65535 bytes.
+toTopicFilter :: ByteString -> Parser TopicFilter
+toTopicFilter bs = do
+  assert (BS.length bs >= 1)
+    "MQTT-4.7.3-1: All Topic Filters MUST be at least one character long"
+  assert (BS.length bs <= 65535)
+    "MQTT-4.7.3-3: Topic Filters MUST NOT encode to more than 65535 bytes"
+  Right t <- return (decodeUtf8' bs) <?>
+    "MQTT-4.7.3-3: Topic Filters are UTF-8 encoded strings"
+  let parts = T.splitOn (T.singleton '/') t
+  assert (isValidTopicFilter parts)
+    "Invalid topic filter"
+  return $ TopicFilter t
+
+isValidTopicFilter :: [Text] -> Bool
+isValidTopicFilter [] = True
+isValidTopicFilter (x : []) | x == T.singleton '#' = True
+isValidTopicFilter (x : xs) | x == T.singleton '+' = isValidTopicFilter xs
+isValidTopicFilter (x : xs) =
+  isNothing (T.find (\c -> c == '#' || c == '+' || c == '\0') x) && isValidTopicFilter xs
 
 maybeM :: Monad m => Bool -> m a -> m (Maybe a)
 maybeM True  p = Just <$> p
