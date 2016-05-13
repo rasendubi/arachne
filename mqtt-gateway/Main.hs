@@ -4,4 +4,4 @@ import Network (withSocketsDo)
 import Network.MQTT.Gateway (runServer, defaultMQTTAddr)
 
 main :: IO ()
-main = withSocketsDo $ runServer defaultMQTTAddr
+main = withSocketsDo $ runServer defaultMQTTAddr True

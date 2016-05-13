@@ -4,10 +4,10 @@ module Network.MQTT.Gateway
   ) where
 
 import           Control.Concurrent (forkIO, forkIOWithUnmask)
-import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTQueue, writeTQueue)
+import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, readTQueue, writeTQueue, writeTVar)
 import           Control.Exception (allowInterrupt, bracket, finally, mask_)
 
-import           Control.Monad (forM_, forever, void)
+import           Control.Monad (forM_, forever, guard, void, when)
 
 import qualified Data.Attoparsec.ByteString.Lazy as A
 
@@ -18,7 +18,7 @@ import qualified Network.MQTT.Encoder as MQTT
 import qualified Network.MQTT.Packet as MQTT
 import           Network.MQTT.Parser (parsePacket)
 
-import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(SockAddrInet), SocketOption(ReusePort), SocketType(Stream), accept, addrAddress, addrCanonName, addrFamily, addrFlags, addrProtocol, addrSocketType, bind, close, defaultProtocol, listen, socket, setSocketOption, socketToHandle)
+import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(SockAddrInet), SocketOption(ReusePort), SocketType(Stream), accept, addrAddress, addrCanonName, addrFamily, addrFlags, addrProtocol, addrSocketType, bind, close, listen, socket, setSocketOption, socketToHandle)
 
 import           System.IO (Handle, IOMode(ReadWriteMode), hClose)
 
@@ -31,10 +31,10 @@ data GatewayClient =
 newGatewayClient :: STM GatewayClient
 newGatewayClient = GatewayClient <$> newTQueue <*> newTVar False
 
-runServer :: AddrInfo -> IO ()
-runServer addr = do
+runServer :: AddrInfo -> Bool -> IO ()
+runServer addr reusePort = do
   bracket (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
-    setSocketOption sock ReusePort 1
+    when reusePort $ setSocketOption sock ReusePort 1
     bind sock (addrAddress addr)
     listen sock 5
 
@@ -59,12 +59,13 @@ defaultMQTTAddr :: AddrInfo
 defaultMQTTAddr = AddrInfo{ addrFlags = []
                           , addrFamily = AF_INET
                           , addrSocketType = Stream
-                          , addrProtocol = defaultProtocol
+                          , addrProtocol = 6 -- TCP
                           , addrAddress = SockAddrInet (fromInteger 1883) 0
                           , addrCanonName = Nothing
                           }
 
--- Don't need to close socket, as it's done in 'runServer' in a safer way..
+-- Don't need to close socket, as it's done in 'runServer' in a safer
+-- way.
 handleClient :: Handle -> SockAddr -> IO ()
 handleClient handler addr = do
   putStrLn $ "Connected: " ++ show addr
@@ -77,7 +78,18 @@ handleClient handler addr = do
   forM_ pkgs $ \p -> do
     putStrLn $ "Received: " ++ show p
     atomically $ do
-      writeTQueue (gcSendQueue state) (MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
+      case p of
+        MQTT.CONNECT MQTT.ConnectPacket{ } -> do
+          -- Accept all connections.
+          connected <- readTVar (gcConnected state)
+          guard (not connected)
+          writeTQueue (gcSendQueue state) (MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
+          writeTVar (gcConnected state) True
+        MQTT.PINGREQ _ -> do
+          connected <- readTVar (gcConnected state)
+          guard connected
+          writeTQueue (gcSendQueue state) (MQTT.PINGRESP MQTT.PingrespPacket)
+        _ -> return ()
 
 -- | Parses a lazy ByteString to the list of MQTT Packets.
 --
