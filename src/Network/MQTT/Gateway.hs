@@ -22,6 +22,8 @@ import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(S
 
 import           System.IO (Handle, IOMode(ReadWriteMode), hClose)
 
+import           System.Log.Logger (debugM)
+
 data GatewayClient =
   GatewayClient
   { gcSendQueue :: TQueue MQTT.Packet
@@ -68,7 +70,7 @@ defaultMQTTAddr = AddrInfo{ addrFlags = []
 -- way.
 handleClient :: Handle -> SockAddr -> IO ()
 handleClient handler addr = do
-  putStrLn $ "Connected: " ++ show addr
+  debugM "MQTT.Gateway" $ "Connected: " ++ show addr
 
   state <- atomically newGatewayClient
   void $ forkIO $ clientSender handler (gcSendQueue state)
@@ -76,7 +78,7 @@ handleClient handler addr = do
   pkgs <- parseStream <$> BL.hGetContents handler
 
   forM_ pkgs $ \p -> do
-    putStrLn $ "Received: " ++ show p
+    debugM "MQTT.Gateway" $ "Received: " ++ show p
     atomically $ do
       case p of
         MQTT.CONNECT MQTT.ConnectPacket{ } -> do
@@ -106,5 +108,5 @@ parseStream s
 clientSender :: Handle -> TQueue MQTT.Packet -> IO ()
 clientSender h queue = forever $ do
   p <- atomically $ readTQueue queue
-  putStrLn $ "Sending: " ++ show p
+  debugM "MQTT.Gateway" $ "Sending: " ++ show p
   BL.Builder.hPutBuilder h (MQTT.encodePacket p)
