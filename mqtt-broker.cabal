@@ -38,7 +38,7 @@ test-suite spec
                      , text >=1.2.1 && <1.3
                      , hspec >=2.2.3 && <2.3
                      , hspec-smallcheck >=0.3.0 && <0.5
-                     , smallcheck >=1.1.1 && < 1.2
+                     , smallcheck >=1.1.1 && <1.2
                      , smallcheck-series >=0.5.1 && <0.6
                      , random >=1.1 && <1.2
                      , vector >=0.11 && <0.12

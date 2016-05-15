@@ -61,10 +61,10 @@ newtype Password = Password { unPassword :: ByteString }
   deriving (Eq, Show, Generic)
 
 newtype Topic = Topic { unTopic :: Text }
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Show)
 
 newtype TopicFilter = TopicFilter { unTopicFilter :: Text }
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Show)
 
 data Message
   = Message
@@ -100,7 +100,7 @@ data ConnectPacket
     , connectPassword         :: !(Maybe Password)
     , connectCleanSession     :: !Bool
     , connectKeepAlive        :: !Word16
-    } deriving (Eq, Show, Generic)
+    } deriving (Eq, Show)
 
 data ConnackPacket
   = ConnackPacket
@@ -148,19 +148,19 @@ data SubscribePacket
   = SubscribePacket
     { subscribePacketIdentifier :: !PacketIdentifier,
       subscribeTopicFiltersQoS  :: [(TopicFilter, QoS)]
-    } deriving (Eq, Show, Generic)
+    } deriving (Eq, Show)
 
 data SubackPacket
   = SubackPacket
     { subackPacketIdentifier :: !PacketIdentifier,
       subackResponses        :: [Maybe QoS]
-    } deriving (Eq, Show, Generic)
+    } deriving (Eq, Show)
 
 data UnsubscribePacket
   = UnsubscribePacket
     { unsubscribePacketIdentifier :: !PacketIdentifier,
       unsubscribeTopicFilters     :: [TopicFilter]
-    } deriving (Eq, Show, Generic)
+    } deriving (Eq, Show)
 
 data UnsubackPacket
   = UnsubackPacket
