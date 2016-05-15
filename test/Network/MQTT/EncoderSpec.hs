@@ -15,6 +15,7 @@ import           Data.Attoparsec.ByteString       ( parseOnly )
 import           Data.ByteString.Builder          ( toLazyByteString )
 import           Data.ByteString.Lazy             ( toStrict )
 import qualified Data.Text                        as T
+import qualified Data.ByteString                  as BS
 import           Data.Maybe                       ( isJust, isNothing )
 
 spec :: Spec
@@ -23,6 +24,23 @@ spec = do
     it "parsePacket . encodePacket = id" $ property $ \p ->
       let bytes = toStrict . toLazyByteString $ encodePacket p
       in valid p ==> parseOnly parsePacket bytes == Right p
+
+  describe "Encoder" $ do
+    let shouldBeEncodedAs p bytes =
+          (toStrict . toLazyByteString . encodePacket) p `shouldBe` BS.pack bytes
+
+    it "should encode packet having a big payload" $ do
+      let bigPayload = replicate 121 0xab
+
+      PUBLISH PublishPacket{ publishDup = True
+                           , publishMessage = Message
+                                                QoS2
+                                                True
+                                                (Topic $ T.pack "a/b")
+                                                (BS.pack bigPayload)
+                           , publishPacketIdentifier = Just (PacketIdentifier 10)
+                           }
+        `shouldBeEncodedAs` ([0x3d, 0x80, 0x01, 0x00, 0x03, 0x61, 0x2f, 0x62, 0x00, 0x0a] ++ bigPayload)
 
 valid :: Packet -> Bool
 valid packet = case packet of
