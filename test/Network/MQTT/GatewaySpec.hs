@@ -1,15 +1,14 @@
-module Network.MQTT.GatewaySpec (spec) where
+module Network.MQTT.GatewaySpec (spec, debugTests) where
 
-import           Control.Concurrent (Chan, newChan, readChan, writeList2Chan, forkIO, killThread, threadDelay)
+import           Control.Concurrent (forkIO, killThread, threadDelay)
 import           Control.Exception (bracket)
 
 import           Control.Monad.Cont (liftIO)
 import           Control.Monad.Reader (ReaderT, asks, runReaderT)
 
-import qualified Data.Attoparsec.ByteString.Lazy as A
+import           Data.ByteString.Builder.Extra (flush)
 
-import           Data.ByteString.Builder (hPutBuilder)
-import qualified Data.ByteString.Lazy as BL
+import           Data.Monoid ((<>))
 
 import qualified Data.Text as T
 
@@ -18,19 +17,28 @@ import           Network.MQTT.Gateway (runServer, defaultMQTTAddr)
 import           Network.MQTT.Packet
 import           Network.MQTT.Parser (parsePacket)
 
-import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, socket, socketToHandle, addrProtocol, addrSocketType, SockAddr(SockAddrInet))
+import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, socket, addrProtocol, addrSocketType, SockAddr(SockAddrInet), close, Socket)
 
-import           System.IO (Handle, IOMode(ReadWriteMode), hClose)
+import           System.IO.Streams (InputStream, OutputStream)
+import qualified System.IO.Streams as S
+import qualified System.IO.Streams.Attoparsec as S
+
+import           System.Log (Priority(DEBUG))
+import           System.Log.Logger (debugM, rootLoggerName, setLevel, updateGlobalLogger)
 
 import           Test.Hspec
 
 testAddr :: AddrInfo
 testAddr = defaultMQTTAddr{ addrAddress = SockAddrInet (fromInteger 27200) 0 }
 
+debugTests :: IO ()
+debugTests = updateGlobalLogger rootLoggerName (setLevel DEBUG)
+
 spec :: Spec
 spec = do
   describe "server" $ do
     it "should accept connect message" $ do
+      -- debugTests
       withServer testAddr $ do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
@@ -44,7 +52,7 @@ spec = do
                        })
           expectPacket (CONNACK $ ConnackPacket False Accepted)
 
-    it "should answer connack" $ do
+    it "should answer pingreq" $ do
       withServer testAddr $ do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
@@ -60,10 +68,16 @@ spec = do
           expectPacket (CONNACK $ ConnackPacket False Accepted)
           expectPacket (PINGRESP PingrespPacket)
 
+    it "should reject first message if it's not CONNECT" $ do
+      withServer testAddr $ do
+        withClient testAddr $ do
+          writePacket $ PINGREQ PingreqPacket
+          expectConnectionClosed
+
 data ClientConnection =
   ClientConnection
-  { ccHandle :: Handle
-  , ccQueue :: Chan Packet
+  { ccInputStream :: InputStream Packet
+  , ccOutputStream :: OutputStream Packet
   }
 
 type CCMonad a = ReaderT ClientConnection IO a
@@ -71,45 +85,52 @@ type CCMonad a = ReaderT ClientConnection IO a
 withServer :: AddrInfo -> IO a -> IO a
 withServer addr x =
   -- give a sec to start server
-  withThread (runServer addr False) (threadDelay 100 >> x)
+  withThread (runServer addr) (threadDelay 100 >> x)
 
 withClient :: AddrInfo -> (CCMonad a) -> IO a
-withClient addr m = bracket (openClient addr) hClose $ \h -> do
-  chan <- newChan
-  withThread
-    (writeList2Chan chan . parseStream =<< BL.hGetContents h)
-    (runReaderT m $ ClientConnection h chan)
+withClient addr m = bracket (openClient addr) close $ \s -> do
+  (is, os) <- toMQTTStreams s
+  runReaderT m (ClientConnection is os)
 
-openClient :: AddrInfo -> IO Handle
+openClient :: AddrInfo -> IO Socket
 openClient addr = do
   sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
   connect sock (addrAddress addr)
-  socketToHandle sock ReadWriteMode
+  return sock
 
 writePacket :: Packet -> CCMonad ()
 writePacket p = do
-  h <- asks ccHandle
-  liftIO $ hPutBuilder h (encodePacket p)
+  os <- asks ccOutputStream
+  liftIO $ debugM "MQTT.GatewaySpec" $ "Test sent: " ++ show p
+  liftIO $ S.write (Just p) os
 
 expectPacket :: Packet -> CCMonad ()
 expectPacket p = do
-  ch <- asks ccQueue
-  p1 <- liftIO $ readChan ch
-  liftIO $ p1 `shouldBe` p
+  is <- asks ccInputStream
+  p1 <- liftIO $ S.read is
+  liftIO $ debugM "MQTT.GatewaySpec" $ "Test received: " ++ show p1
+  liftIO $ p1 `shouldBe` Just p
+
+expectConnectionClosed :: CCMonad ()
+expectConnectionClosed = do
+  liftIO $ debugM "MQTT.GatewaySpec" $ "Test expect connection closed"
+  is <- asks ccInputStream
+  liftIO $ S.read is `shouldThrow` anyException
+
+closeConnection :: CCMonad ()
+closeConnection = do
+  os <- asks ccOutputStream
+  liftIO $ debugM "MQTT.GatewaySpec" $ "Test closing connection"
+  liftIO $ S.write Nothing os
 
 -- | Runs first action in the parallel thread killing after second
 -- action is done.
 withThread :: IO () -> IO a -> IO a
 withThread a b = bracket (forkIO a) killThread (\_ -> b)
 
--- | Parses a lazy ByteString to the list of MQTT Packets.
---
--- It should be removed and replaced by strict parsing, as lazy
--- parsing is not idiomatic Attoparsec.
-parseStream :: BL.ByteString -> [Packet]
-parseStream s
-  | BL.null s = []
-  | otherwise =
-      case A.parse parsePacket s of
-        A.Fail _ _ _ -> error "Parsing failed"
-        A.Done c p   -> p : parseStream c
+toMQTTStreams :: Socket -> IO (InputStream Packet, OutputStream Packet)
+toMQTTStreams sock = do
+  (ibs, obs) <- S.socketToStreams sock
+  is <- S.parserToInputStream (Just <$> parsePacket) ibs
+  os <- S.contramap (\x -> encodePacket x <> flush) =<< S.builderStream obs
+  return (is, os)

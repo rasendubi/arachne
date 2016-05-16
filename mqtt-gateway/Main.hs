@@ -7,4 +7,4 @@ import System.Log.Logger (Priority(DEBUG), rootLoggerName, setLevel, updateGloba
 main :: IO ()
 main = do
   updateGlobalLogger rootLoggerName (setLevel DEBUG)
-  withSocketsDo $ runServer defaultMQTTAddr True
+  withSocketsDo $ runServer defaultMQTTAddr

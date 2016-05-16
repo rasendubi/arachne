@@ -1,3 +1,4 @@
+{-# LANGUAGE AutoDeriveTypeable #-}
 module Network.MQTT.Gateway
   ( runServer
   , defaultMQTTAddr
@@ -5,38 +6,56 @@ module Network.MQTT.Gateway
 
 import           Control.Concurrent (forkIO, forkIOWithUnmask)
 import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, readTQueue, writeTQueue, writeTVar)
-import           Control.Exception (allowInterrupt, bracket, finally, mask_)
+import           Control.Exception (Exception, allowInterrupt, bracket, finally, mask_, throwIO)
 
-import           Control.Monad (forM_, forever, guard, void, when)
+import           Control.Monad (forever, guard, void, when, unless)
 
-import qualified Data.Attoparsec.ByteString.Lazy as A
+import           Data.ByteString.Builder.Extra (flush)
 
-import qualified Data.ByteString.Builder as BL.Builder
-import qualified Data.ByteString.Lazy as BL
+import           Data.Monoid ((<>))
 
 import qualified Network.MQTT.Encoder as MQTT
 import qualified Network.MQTT.Packet as MQTT
-import           Network.MQTT.Parser (parsePacket)
+import qualified Network.MQTT.Parser as MQTT
 
-import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(SockAddrInet), SocketOption(ReusePort), SocketType(Stream), accept, addrAddress, addrCanonName, addrFamily, addrFlags, addrProtocol, addrSocketType, bind, close, listen, socket, setSocketOption, socketToHandle)
+import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(SockAddrInet), SocketOption(ReusePort), SocketType(Stream), accept, addrAddress, addrCanonName, addrFamily, addrFlags, addrProtocol, addrSocketType, bind, close, listen, socket, setSocketOption, Socket, isSupportedSocketOption)
 
-import           System.IO (Handle, IOMode(ReadWriteMode), hClose)
+import           System.IO.Streams (InputStream, OutputStream)
+import qualified System.IO.Streams as S
+import qualified System.IO.Streams.Attoparsec as S
 
 import           System.Log.Logger (debugM)
 
+data MQTTError = MQTTError
+  deriving (Show)
+
+instance Exception MQTTError
+
+-- | Converts socket to input and output io-streams.
+toMQTTStreams :: Socket -> IO (InputStream MQTT.Packet, OutputStream MQTT.Packet)
+toMQTTStreams sock = do
+  (ibs, obs) <- S.socketToStreams sock
+  is <- S.parserToInputStream (Just <$> MQTT.parsePacket) ibs
+  os <- S.contramap (\x -> MQTT.encodePacket x <> flush) =<< S.builderStream obs
+  return (is, os)
+
+stmQueueStream :: TQueue (Maybe a) -> IO (InputStream a)
+stmQueueStream t = S.makeInputStream (atomically $ readTQueue t)
+
 data GatewayClient =
   GatewayClient
-  { gcSendQueue :: TQueue MQTT.Packet
+  { gcSendQueue :: TQueue (Maybe MQTT.Packet)
   , gcConnected :: TVar Bool
   }
 
 newGatewayClient :: STM GatewayClient
 newGatewayClient = GatewayClient <$> newTQueue <*> newTVar False
 
-runServer :: AddrInfo -> Bool -> IO ()
-runServer addr reusePort = do
+runServer :: AddrInfo -> IO ()
+runServer addr = do
   bracket (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
-    when reusePort $ setSocketOption sock ReusePort 1
+    when (isSupportedSocketOption ReusePort) $
+      setSocketOption sock ReusePort 1
     bind sock (addrAddress addr)
     listen sock 5
 
@@ -51,11 +70,10 @@ runServer addr reusePort = do
       allowInterrupt
 
       (s, a) <- accept sock
-      handler <- socketToHandle s ReadWriteMode
 
       -- New thread is run in masked state.
       forkIOWithUnmask $ \unmask ->
-        unmask (handleClient handler a) `finally` hClose handler
+        unmask (handleClient s a) `finally` close s
 
 defaultMQTTAddr :: AddrInfo
 defaultMQTTAddr = AddrInfo{ addrFlags = []
@@ -68,45 +86,40 @@ defaultMQTTAddr = AddrInfo{ addrFlags = []
 
 -- Don't need to close socket, as it's done in 'runServer' in a safer
 -- way.
-handleClient :: Handle -> SockAddr -> IO ()
-handleClient handler addr = do
+handleClient :: Socket -> SockAddr -> IO ()
+handleClient sock addr = do
   debugM "MQTT.Gateway" $ "Connected: " ++ show addr
 
   state <- atomically newGatewayClient
-  void $ forkIO $ clientSender handler (gcSendQueue state)
+  (is, os) <- toMQTTStreams sock
+  void $ forkIO $ clientSender os (gcSendQueue state)
 
-  pkgs <- parseStream <$> BL.hGetContents handler
+  (S.connect is =<<) $ S.makeOutputStream $ \mp -> do
+    case mp of
+      Nothing -> return ()
+      Just p -> do
+        debugM "MQTT.Gateway" $ "Received: " ++ show p
+        cont <- atomically $ do
+          case p of
+            MQTT.CONNECT MQTT.ConnectPacket{ } -> do
+              -- Accept all connections.
+              connected <- readTVar (gcConnected state)
+              guard (not connected)
+              writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
+              writeTVar (gcConnected state) True
+              return True
+            MQTT.PINGREQ _ -> do
+              connected <- readTVar (gcConnected state)
+              writeTQueue (gcSendQueue state) $
+                if connected then Just (MQTT.PINGRESP MQTT.PingrespPacket) else Nothing
+              return connected
+            _ -> return True
+        debugM "MQTT.Gateway" $ "Asserting: " ++ show cont
+        unless cont $ throwIO MQTTError
 
-  forM_ pkgs $ \p -> do
-    debugM "MQTT.Gateway" $ "Received: " ++ show p
-    atomically $ do
-      case p of
-        MQTT.CONNECT MQTT.ConnectPacket{ } -> do
-          -- Accept all connections.
-          connected <- readTVar (gcConnected state)
-          guard (not connected)
-          writeTQueue (gcSendQueue state) (MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
-          writeTVar (gcConnected state) True
-        MQTT.PINGREQ _ -> do
-          connected <- readTVar (gcConnected state)
-          guard connected
-          writeTQueue (gcSendQueue state) (MQTT.PINGRESP MQTT.PingrespPacket)
-        _ -> return ()
-
--- | Parses a lazy ByteString to the list of MQTT Packets.
---
--- It should be removed and replaced by strict parsing, as lazy
--- parsing is not idiomatic Attoparsec.
-parseStream :: BL.ByteString -> [MQTT.Packet]
-parseStream s
-  | BL.null s = []
-  | otherwise =
-      case A.parse parsePacket s of
-        A.Fail _ _ _ -> error "Parsing failed"
-        A.Done c p   -> p : parseStream c
-
-clientSender :: Handle -> TQueue MQTT.Packet -> IO ()
-clientSender h queue = forever $ do
-  p <- atomically $ readTQueue queue
-  debugM "MQTT.Gateway" $ "Sending: " ++ show p
-  BL.Builder.hPutBuilder h (MQTT.encodePacket p)
+clientSender :: OutputStream MQTT.Packet -> TQueue (Maybe MQTT.Packet) -> IO ()
+clientSender os queue = do
+  stmQueueStream queue >>= S.mapM_ logPacket >>= S.connectTo os
+  debugM "MQTT.Gateway" $ "clientSender exit"
+  where
+    logPacket p = debugM "MQTT.Gateway" $ "Sending: " ++ show p
