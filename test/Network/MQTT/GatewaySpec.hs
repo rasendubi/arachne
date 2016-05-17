@@ -16,6 +16,7 @@ import           Network.MQTT.Encoder (encodePacket)
 import           Network.MQTT.Gateway (runServer, defaultMQTTAddr)
 import           Network.MQTT.Packet
 import           Network.MQTT.Parser (parsePacket)
+import           Network.MQTT.Utils
 
 import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, socket, addrProtocol, addrSocketType, SockAddr(SockAddrInet), close, Socket)
 
@@ -89,7 +90,7 @@ withServer addr x =
 
 withClient :: AddrInfo -> (CCMonad a) -> IO a
 withClient addr m = bracket (openClient addr) close $ \s -> do
-  (is, os) <- toMQTTStreams s
+  (is, os) <- socketToMqttStreams s
   runReaderT m (ClientConnection is os)
 
 openClient :: AddrInfo -> IO Socket
@@ -127,10 +128,3 @@ closeConnection = do
 -- action is done.
 withThread :: IO () -> IO a -> IO a
 withThread a b = bracket (forkIO a) killThread (\_ -> b)
-
-toMQTTStreams :: Socket -> IO (InputStream Packet, OutputStream Packet)
-toMQTTStreams sock = do
-  (ibs, obs) <- S.socketToStreams sock
-  is <- S.parserToInputStream (Just <$> parsePacket) ibs
-  os <- S.contramap (\x -> encodePacket x <> flush) =<< S.builderStream obs
-  return (is, os)

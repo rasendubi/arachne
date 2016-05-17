@@ -18,6 +18,8 @@ import qualified Network.MQTT.Encoder as MQTT
 import qualified Network.MQTT.Packet as MQTT
 import qualified Network.MQTT.Parser as MQTT
 
+import           Network.MQTT.Utils
+
 import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(SockAddrInet), SocketOption(ReusePort), SocketType(Stream), accept, addrAddress, addrCanonName, addrFamily, addrFlags, addrProtocol, addrSocketType, bind, close, listen, socket, setSocketOption, Socket, isSupportedSocketOption)
 
 import           System.IO.Streams (InputStream, OutputStream)
@@ -30,17 +32,6 @@ data MQTTError = MQTTError
   deriving (Show)
 
 instance Exception MQTTError
-
--- | Converts socket to input and output io-streams.
-toMQTTStreams :: Socket -> IO (InputStream MQTT.Packet, OutputStream MQTT.Packet)
-toMQTTStreams sock = do
-  (ibs, obs) <- S.socketToStreams sock
-  is <- S.parserToInputStream (Just <$> MQTT.parsePacket) ibs
-  os <- S.contramap (\x -> MQTT.encodePacket x <> flush) =<< S.builderStream obs
-  return (is, os)
-
-stmQueueStream :: TQueue (Maybe a) -> IO (InputStream a)
-stmQueueStream t = S.makeInputStream (atomically $ readTQueue t)
 
 data GatewayClient =
   GatewayClient
@@ -93,7 +84,7 @@ handleClient sock addr = do
   debugM "MQTT.Gateway" $ "Connected: " ++ show addr
 
   state <- atomically newGatewayClient
-  (is, os) <- toMQTTStreams sock
+  (is, os) <- socketToMqttStreams sock
 
   forkIO $ clientSender os (gcSendQueue state)
 

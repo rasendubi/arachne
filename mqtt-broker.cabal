@@ -17,6 +17,7 @@ library
                        Network.MQTT.Parser
                        Network.MQTT.Encoder
                        Network.MQTT.Gateway
+                       Network.MQTT.Utils
   build-depends:       base >=4.8.1 && <4.9
                      , attoparsec >=0.12.1 && <0.14
                      , attoparsec-binary >=0.2 && <0.3
