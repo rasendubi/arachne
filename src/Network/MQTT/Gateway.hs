@@ -6,9 +6,9 @@ module Network.MQTT.Gateway
 
 import           Control.Concurrent (forkIO, forkIOWithUnmask)
 import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, readTQueue, writeTQueue, writeTVar)
-import           Control.Exception (Exception, allowInterrupt, bracket, finally, mask_, throwIO)
+import           Control.Exception (Exception, allowInterrupt, bracket, finally, mask_, throwIO, SomeException, try)
 
-import           Control.Monad (forever, guard, void, when, unless)
+import           Control.Monad (forever, guard, when, unless)
 
 import           Data.ByteString.Builder.Extra (flush)
 
@@ -72,8 +72,10 @@ runServer addr = do
       (s, a) <- accept sock
 
       -- New thread is run in masked state.
-      forkIOWithUnmask $ \unmask ->
-        unmask (handleClient s a) `finally` close s
+      forkIOWithUnmask $ \unmask -> do
+        res <- unmask (try (handleClient s a)) :: IO (Either SomeException ())
+        close s
+        debugM "MQTT.Gateway" $ "handleClient exited with " ++ show res
 
 defaultMQTTAddr :: AddrInfo
 defaultMQTTAddr = AddrInfo{ addrFlags = []
@@ -92,30 +94,36 @@ handleClient sock addr = do
 
   state <- atomically newGatewayClient
   (is, os) <- toMQTTStreams sock
-  void $ forkIO $ clientSender os (gcSendQueue state)
 
-  (S.connect is =<<) $ S.makeOutputStream $ \mp -> do
-    case mp of
-      Nothing -> return ()
-      Just p -> do
-        debugM "MQTT.Gateway" $ "Received: " ++ show p
-        cont <- atomically $ do
-          case p of
-            MQTT.CONNECT MQTT.ConnectPacket{ } -> do
-              -- Accept all connections.
-              connected <- readTVar (gcConnected state)
-              guard (not connected)
-              writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
-              writeTVar (gcConnected state) True
-              return True
-            MQTT.PINGREQ _ -> do
-              connected <- readTVar (gcConnected state)
-              writeTQueue (gcSendQueue state) $
-                if connected then Just (MQTT.PINGRESP MQTT.PingrespPacket) else Nothing
-              return connected
-            _ -> return True
-        debugM "MQTT.Gateway" $ "Asserting: " ++ show cont
-        unless cont $ throwIO MQTTError
+  forkIO $ clientSender os (gcSendQueue state)
+
+  clientReceiver state is `finally`
+    -- properly close sender queue
+    atomically (writeTQueue (gcSendQueue state) Nothing)
+
+clientReceiver :: GatewayClient -> InputStream MQTT.Packet -> IO ()
+clientReceiver state is = S.makeOutputStream handler >>= S.connect is
+  where
+    handler Nothing  = return ()
+    handler (Just p) = do
+      debugM "MQTT.Gateway" $ "Received: " ++ show p
+      cont <- atomically $ do
+        case p of
+          MQTT.CONNECT MQTT.ConnectPacket{ } -> do
+            -- Accept all connections.
+            connected <- readTVar (gcConnected state)
+            guard (not connected)
+            writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
+            writeTVar (gcConnected state) True
+            return True
+          MQTT.PINGREQ _ -> do
+            connected <- readTVar (gcConnected state)
+            writeTQueue (gcSendQueue state) $
+              if connected then Just (MQTT.PINGRESP MQTT.PingrespPacket) else Nothing
+            return connected
+          _ -> return True
+      debugM "MQTT.Gateway" $ "Asserting: " ++ show cont
+      unless cont $ throwIO MQTTError
 
 clientSender :: OutputStream MQTT.Packet -> TQueue (Maybe MQTT.Packet) -> IO ()
 clientSender os queue = do
