@@ -34,10 +34,10 @@ spec = do
 
       PUBLISH PublishPacket{ publishDup = True
                            , publishMessage = Message
-                                                QoS2
-                                                True
                                                 (Topic $ T.pack "a/b")
                                                 (BS.pack bigPayload)
+                                                QoS2
+                                                True
                            , publishPacketIdentifier = Just (PacketIdentifier 10)
                            }
         `shouldBeEncodedAs` ([0x3d, 0x80, 0x01, 0x00, 0x03, 0x61, 0x2f, 0x62, 0x00, 0x0a] ++ bigPayload)

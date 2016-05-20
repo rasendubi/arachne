@@ -15,6 +15,9 @@ import           Data.Word (Word8)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 
+-- | Encode packet to the ByteString.
+--
+-- The function assumes the packet is well-formed and valid.
 encodePacket :: Packet -> Builder
 encodePacket packet = mconcat [fixedHeader', variableHeader', payload']
   where

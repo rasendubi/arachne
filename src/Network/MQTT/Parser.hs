@@ -61,6 +61,16 @@ take' len = withLength (fromIntegral len) (take len)
 
 --------------------------------------------------------------------------------
 
+-- | An attoparsec parser for MQTT 3.1.1 packet.
+--
+-- The parser is fully compliant with the standard. If the parser
+-- fails that means the message is ill-formatted and the connection
+-- MUST be closed without sending any packet.
+--
+-- Note that there are packets that can not be processed but require a
+-- response (e.g, wrong protocol level). In that case, parser succeeds
+-- and that's a responsibility of the higher-level logic to examine
+-- the packet and reply accordingly.
 parsePacket :: Parser Packet
 parsePacket = do
   byte1 <- anyWord8
@@ -87,6 +97,10 @@ parsePacket = do
     14 -> DISCONNECT  <$> parseDisconnect  flags
     _  -> error "This could not happen"
 
+-- | Parses remaining length of the packet.
+--
+-- This function is for internal use only and was exported for proper
+-- testing. It may be hidden in the future.
 remainingLength :: Parser Word32
 remainingLength = foldr1 (\x acc -> (acc `shiftL` 7) .|. x) <$> takeBytes 0
   where
@@ -142,7 +156,7 @@ parseConnect flags = do
     willMsg <- maybeM willFlag $ do
       willTopic <- withLength 0 . toTopicName =<< parseByteString
       willMessage <- parseByteString
-      return $ Message (toEnum $ fromIntegral willQoS) willRetain willTopic willMessage
+      return $ Message willTopic willMessage (toEnum $ fromIntegral willQoS) willRetain
     userName <- maybeM userNameFlag (UserName <$> parseText)
     password <- maybeM passwordFlag (Password <$> parseByteString)
 
@@ -208,7 +222,7 @@ parsePublish flags = do
 
   return PublishPacket
     { publishDup = dupFlag
-    , publishMessage = Message (toEnum $ fromIntegral qosLevel) retainFlag topic payload
+    , publishMessage = Message topic payload (toEnum $ fromIntegral qosLevel) retainFlag
     , publishPacketIdentifier = packetId
     }
 
