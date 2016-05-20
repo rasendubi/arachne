@@ -1,6 +1,6 @@
 module Network.MQTT.GatewaySpec (spec, debugTests) where
 
-import           Control.Concurrent (forkIO, killThread, threadDelay)
+import           Control.Concurrent (forkIO, killThread)
 import           Control.Exception (bracket)
 
 import           Control.Monad (forM_)
@@ -9,11 +9,11 @@ import           Control.Monad.Reader (ReaderT, asks, runReaderT)
 
 import qualified Data.Text as T
 
-import qualified Network.MQTT.Gateway as Gateway (runOnAddr, defaultMQTTAddr)
+import qualified Network.MQTT.Gateway as Gateway (runOnSocket, defaultMQTTAddr)
 import           Network.MQTT.Packet
 import           Network.MQTT.Utils
 
-import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, socket, addrProtocol, addrSocketType, SockAddr(SockAddrInet), close, Socket)
+import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, socket, addrProtocol, addrSocketType, SockAddr(SockAddrInet), close, Socket, aNY_PORT, bind, listen, socketPort)
 
 import           System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as S
@@ -25,9 +25,6 @@ import           System.Timeout (timeout)
 
 import           Test.Hspec
 
-testAddr :: AddrInfo
-testAddr = Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet (fromInteger 27200) 0 }
-
 debugTests :: IO ()
 debugTests = updateGlobalLogger rootLoggerName (setLevel DEBUG)
 
@@ -36,7 +33,7 @@ spec = do
   describe "server" $ do
     it "should accept connect message" $ do
       -- debugTests
-      withServer testAddr $ do
+      withServer $ \testAddr -> do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
                        { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
@@ -50,7 +47,7 @@ spec = do
           expectPacket (CONNACK $ ConnackPacket False Accepted)
 
     it "should answer pingreq" $ do
-      withServer testAddr $ do
+      withServer $ \testAddr -> do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
                        { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
@@ -66,13 +63,13 @@ spec = do
           expectPacket (PINGRESP PingrespPacket)
 
     it "should reject first message if it's not CONNECT" $ do
-      withServer testAddr $ do
+      withServer $ \testAddr -> do
         withClient testAddr $ do
           writePacket $ PINGREQ PingreqPacket
           expectConnectionClosed
 
     it "MQTT-3.1.0-2: The Server MUST process a second CONNECT Packet sent from a Client as a protocol violation and disconnect the Client" $ do
-      withServer testAddr $ do
+      withServer $ \testAddr -> do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
                        { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
@@ -96,7 +93,7 @@ spec = do
           expectConnectionClosed
 
     it "should close connection if new client connects with the same client identifier" $ do
-      withServer testAddr $ do
+      withServer $ \testAddr -> do
         c1 <- openClient testAddr
         c2 <- openClient testAddr
 
@@ -130,7 +127,7 @@ spec = do
         closeClient c2
 
     it "should not disconnect if the client identifier is different" $ do
-      withServer testAddr $ do
+      withServer $ \testAddr -> do
         c1 <- openClient testAddr
         c2 <- openClient testAddr
 
@@ -170,7 +167,7 @@ spec = do
         closeClient c2
 
     it "MQTT-3.1.2-2: The Server MUST respond to the CONNECT Packet with a CONNACK return code 0x01 (unacceptable protocol level) and then disconnect the Client if the Protocol Level is not supported by the Server" $ do
-      withServer testAddr $ do
+      withServer $ \testAddr -> do
         forM_ ([0x00 .. 0x03] ++ [0x05 .. 0xff]) $ \protocolLevel ->
           withClient testAddr $ do
             writePacket (CONNECT $ ConnectPacket
@@ -193,10 +190,16 @@ data ClientConnection =
 
 type CCMonad a = ReaderT ClientConnection IO a
 
-withServer :: AddrInfo -> IO a -> IO a
-withServer addr x =
-  -- give a sec to start server
-  withThread (Gateway.runOnAddr addr) (threadDelay 100 >> x)
+withServer :: (AddrInfo -> IO a) -> IO a
+withServer x =
+  bracket (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
+    bind sock (addrAddress addr)
+    listen sock 5
+    withThread (Gateway.runOnSocket sock) $ do
+      port <- socketPort sock
+      x Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet port 0 }
+  where
+    addr = Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet aNY_PORT 0 }
 
 withClient :: AddrInfo -> (CCMonad a) -> IO a
 withClient addr m = bracket (openClient addr) closeClient $ runReaderT m

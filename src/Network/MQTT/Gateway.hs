@@ -3,6 +3,7 @@ module Network.MQTT.Gateway
   ( newGateway
   , handleOnAddr
   , runOnAddr
+  , runOnSocket
   , defaultMQTTAddr
   ) where
 
@@ -11,7 +12,7 @@ import           Control.Concurrent (killThread)
 import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, writeTQueue, writeTVar)
 import           Control.Exception (Exception, allowInterrupt, bracket, finally, mask_, throwIO, SomeException, try)
 
-import           Control.Monad (forever, guard, when, unless)
+import           Control.Monad (forever, when, unless)
 
 import qualified Network.MQTT.Packet as MQTT
 
@@ -56,7 +57,10 @@ handleOnAddr gw addr = do
       setSocketOption sock ReusePort 1
     bind sock (addrAddress addr)
     listen sock 5
+    handleOnSocket gw sock
 
+handleOnSocket :: Gateway -> Socket -> IO ()
+handleOnSocket gw sock = do
     -- We want to handle all incoming socket in exception-safe way, so
     -- no sockets leak.
     --
@@ -79,6 +83,11 @@ runOnAddr :: AddrInfo -> IO ()
 runOnAddr addr = do
   gw <- newGateway
   handleOnAddr gw addr
+
+runOnSocket :: Socket -> IO ()
+runOnSocket sock = do
+  gw <- newGateway
+  handleOnSocket gw sock
 
 defaultMQTTAddr :: AddrInfo
 defaultMQTTAddr = AddrInfo{ addrFlags = []
