@@ -70,6 +70,30 @@ spec = do
           writePacket $ PINGREQ PingreqPacket
           expectConnectionClosed
 
+    it "MQTT-3.1.0-2: The Server MUST process a second CONNECT Packet sent from a Client as a protocol violation and disconnect the Client" $ do
+      withServer testAddr $ do
+        withClient testAddr $ do
+          writePacket (CONNECT $ ConnectPacket
+                       { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
+                       , connectProtocolLevel = 4
+                       , connectWillMsg = Nothing
+                       , connectUserName = Nothing
+                       , connectPassword = Nothing
+                       , connectCleanSession = True
+                       , connectKeepAlive = 0
+                       })
+          expectPacket (CONNACK $ ConnackPacket False Accepted)
+          writePacket (CONNECT $ ConnectPacket
+                       { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
+                       , connectProtocolLevel = 4
+                       , connectWillMsg = Nothing
+                       , connectUserName = Nothing
+                       , connectPassword = Nothing
+                       , connectCleanSession = True
+                       , connectKeepAlive = 0
+                       })
+          expectConnectionClosed
+
     it "should close connection if new client connects with the same client identifier" $ do
       withServer testAddr $ do
         c1 <- openClient testAddr
