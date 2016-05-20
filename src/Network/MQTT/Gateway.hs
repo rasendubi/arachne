@@ -7,11 +7,9 @@ module Network.MQTT.Gateway
   ) where
 
 import           Control.Concurrent (forkIO, forkIOWithUnmask)
+import           Control.Concurrent (killThread)
 import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, writeTQueue, writeTVar)
 import           Control.Exception (Exception, allowInterrupt, bracket, finally, mask_, throwIO, SomeException, try)
-
-import qualified STMContainers.Map as STM (Map)
-import qualified STMContainers.Map as STM.Map
 
 import           Control.Monad (forever, guard, when, unless)
 
@@ -21,11 +19,13 @@ import           Network.MQTT.Utils
 
 import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(SockAddrInet), SocketOption(ReusePort), SocketType(Stream), accept, addrAddress, addrCanonName, addrFamily, addrFlags, addrProtocol, addrSocketType, bind, close, listen, socket, setSocketOption, Socket, isSupportedSocketOption)
 
+import qualified STMContainers.Map as STM (Map)
+import qualified STMContainers.Map as STM.Map
+
 import           System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as S
 
 import           System.Log.Logger (debugM)
-import Control.Concurrent (ThreadId)
 
 data MQTTError = MQTTError
   deriving (Show)
@@ -36,9 +36,6 @@ data Gateway =
   Gateway
   { gClients :: STM.Map MQTT.ClientIdentifier GatewayClient
   }
-
-newGatewaySTM :: STM Gateway
-newGatewaySTM = Gateway <$> STM.Map.new
 
 newGateway :: IO Gateway
 newGateway = Gateway <$> STM.Map.newIO
@@ -101,27 +98,38 @@ handleClient gw sock addr = do
   state <- atomically newGatewayClient
   (is, os) <- socketToMqttStreams sock
 
-  forkIO $ clientSender os (gcSendQueue state)
-
-  clientReceiver state is `finally`
+  t <- forkIO $ clientReceiver gw state is `finally`
     -- properly close sender queue
     atomically (writeTQueue (gcSendQueue state) Nothing)
 
-clientReceiver :: GatewayClient -> InputStream MQTT.Packet -> IO ()
-clientReceiver state is = S.makeOutputStream handler >>= S.connect is
+  clientSender os (gcSendQueue state) `finally` killThread t
+
+clientReceiver :: Gateway -> GatewayClient -> InputStream MQTT.Packet -> IO ()
+clientReceiver gw state is = do
+  r <- try (S.makeOutputStream handler >>= S.connect is) :: IO (Either SomeException ())
+  debugM "MQTT.Gateway" $ "clientReceiver exit: " ++ show r
+
   where
     handler Nothing  = return ()
     handler (Just p) = do
       debugM "MQTT.Gateway" $ "Received: " ++ show p
       cont <- atomically $ do
         case p of
-          MQTT.CONNECT MQTT.ConnectPacket{ } -> do
+          MQTT.CONNECT MQTT.ConnectPacket{ MQTT.connectClientIdentifier = clientId } -> do
             -- Accept all connections.
             connected <- readTVar (gcConnected state)
             guard (not connected)
             writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
             writeTVar (gcConnected state) True
+
+            mx <- STM.Map.lookup clientId (gClients gw)
+            STM.Map.insert state clientId (gClients gw)
+            case mx of
+              Nothing -> return ()
+              Just x -> writeTQueue (gcSendQueue x) Nothing
+
             return True
+
           MQTT.PINGREQ _ -> do
             connected <- readTVar (gcConnected state)
             writeTQueue (gcSendQueue state) $

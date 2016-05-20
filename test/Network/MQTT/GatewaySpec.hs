@@ -6,26 +6,21 @@ import           Control.Exception (bracket)
 import           Control.Monad.Cont (liftIO)
 import           Control.Monad.Reader (ReaderT, asks, runReaderT)
 
-import           Data.ByteString.Builder.Extra (flush)
-
-import           Data.Monoid ((<>))
-
 import qualified Data.Text as T
 
-import           Network.MQTT.Encoder (encodePacket)
 import qualified Network.MQTT.Gateway as Gateway (runOnAddr, defaultMQTTAddr)
 import           Network.MQTT.Packet
-import           Network.MQTT.Parser (parsePacket)
 import           Network.MQTT.Utils
 
 import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, socket, addrProtocol, addrSocketType, SockAddr(SockAddrInet), close, Socket)
 
 import           System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as S
-import qualified System.IO.Streams.Attoparsec as S
 
 import           System.Log (Priority(DEBUG))
 import           System.Log.Logger (debugM, rootLoggerName, setLevel, updateGlobalLogger)
+
+import           System.Timeout (timeout)
 
 import           Test.Hspec
 
@@ -75,9 +70,84 @@ spec = do
           writePacket $ PINGREQ PingreqPacket
           expectConnectionClosed
 
+    it "should close connection if new client connects with the same client identifier" $ do
+      withServer testAddr $ do
+        c1 <- openClient testAddr
+        c2 <- openClient testAddr
+
+        runCC c1 $ do
+          writePacket (CONNECT $ ConnectPacket
+                       { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
+                       , connectProtocolLevel = 4
+                       , connectWillMsg = Nothing
+                       , connectUserName = Nothing
+                       , connectPassword = Nothing
+                       , connectCleanSession = True
+                       , connectKeepAlive = 0
+                       })
+          expectPacket (CONNACK $ ConnackPacket False Accepted)
+
+        runCC c2 $ do
+          writePacket (CONNECT $ ConnectPacket
+                       { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
+                       , connectProtocolLevel = 4
+                       , connectWillMsg = Nothing
+                       , connectUserName = Nothing
+                       , connectPassword = Nothing
+                       , connectCleanSession = True
+                       , connectKeepAlive = 0
+                       })
+          expectPacket (CONNACK $ ConnackPacket False Accepted)
+
+        runCC c1 $ expectConnectionClosed
+
+        closeClient c1
+        closeClient c2
+
+    it "should not disconnect if the client identifier is different" $ do
+      withServer testAddr $ do
+        c1 <- openClient testAddr
+        c2 <- openClient testAddr
+
+        runCC c1 $ do
+          writePacket (CONNECT $ ConnectPacket
+                       { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
+                       , connectProtocolLevel = 4
+                       , connectWillMsg = Nothing
+                       , connectUserName = Nothing
+                       , connectPassword = Nothing
+                       , connectCleanSession = True
+                       , connectKeepAlive = 0
+                       })
+          expectPacket (CONNACK $ ConnackPacket False Accepted)
+
+        runCC c2 $ do
+          writePacket (CONNECT $ ConnectPacket
+                       { connectClientIdentifier = ClientIdentifier $ T.pack "hello"
+                       , connectProtocolLevel = 4
+                       , connectWillMsg = Nothing
+                       , connectUserName = Nothing
+                       , connectPassword = Nothing
+                       , connectCleanSession = True
+                       , connectKeepAlive = 0
+                       })
+          expectPacket (CONNACK $ ConnackPacket False Accepted)
+
+        runCC c1 $ do
+          writePacket (PINGREQ PingreqPacket)
+          expectPacket (PINGRESP PingrespPacket)
+
+        runCC c2 $ do
+          writePacket (PINGREQ PingreqPacket)
+          expectPacket (PINGRESP PingrespPacket)
+
+        closeClient c1
+        closeClient c2
+
 data ClientConnection =
   ClientConnection
-  { ccInputStream :: InputStream Packet
+  { ccSocket :: Socket
+  , ccInputStream :: InputStream Packet
   , ccOutputStream :: OutputStream Packet
   }
 
@@ -89,15 +159,20 @@ withServer addr x =
   withThread (Gateway.runOnAddr addr) (threadDelay 100 >> x)
 
 withClient :: AddrInfo -> (CCMonad a) -> IO a
-withClient addr m = bracket (openClient addr) close $ \s -> do
-  (is, os) <- socketToMqttStreams s
-  runReaderT m (ClientConnection is os)
+withClient addr m = bracket (openClient addr) closeClient $ runReaderT m
 
-openClient :: AddrInfo -> IO Socket
+openClient :: AddrInfo -> IO ClientConnection
 openClient addr = do
   sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
   connect sock (addrAddress addr)
-  return sock
+  (is, os) <- socketToMqttStreams sock
+  return $ ClientConnection sock is os
+
+closeClient :: ClientConnection -> IO ()
+closeClient = close . ccSocket
+
+runCC :: ClientConnection -> CCMonad a -> IO a
+runCC = flip runReaderT
 
 writePacket :: Packet -> CCMonad ()
 writePacket p = do
@@ -108,21 +183,15 @@ writePacket p = do
 expectPacket :: Packet -> CCMonad ()
 expectPacket p = do
   is <- asks ccInputStream
-  p1 <- liftIO $ S.read is
+  p1 <- liftIO $ timeout 1000000 (S.read is)
   liftIO $ debugM "MQTT.GatewaySpec" $ "Test received: " ++ show p1
-  liftIO $ p1 `shouldBe` Just p
+  liftIO $ p1 `shouldBe` Just (Just p)
 
 expectConnectionClosed :: CCMonad ()
 expectConnectionClosed = do
   liftIO $ debugM "MQTT.GatewaySpec" $ "Test expect connection closed"
   is <- asks ccInputStream
-  liftIO $ S.read is `shouldThrow` anyException
-
-closeConnection :: CCMonad ()
-closeConnection = do
-  os <- asks ccOutputStream
-  liftIO $ debugM "MQTT.GatewaySpec" $ "Test closing connection"
-  liftIO $ S.write Nothing os
+  liftIO $ timeout 1000000 (S.read is) `shouldThrow` anyException
 
 -- | Runs first action in the parallel thread killing after second
 -- action is done.
