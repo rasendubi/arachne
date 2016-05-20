@@ -1,8 +1,27 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Network.MQTT.Packet
-  ( Packet(..)
+  (
+  -- * User facing types
+  -- ** Connection
+    ClientIdentifier(..)
+  , UserName(..)
+  , Password(..)
+
+  -- ** Messages
+  , Topic(..)
+  , TopicFilter(..)
+  , QoS(..)
+  , Message(..)
+
+  -- * Packets
+  -- | These are internal packet structures for MQTT protocol. They
+  -- are largely undocumented for the purpose: you should really read
+  -- <http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html the specification>.
+  , PacketIdentifier(..)
+  , Packet(..)
   , ConnectPacket(..)
   , ConnackPacket(..)
+  , ConnackReturnCode(..)
   , PublishPacket(..)
   , PubackPacket(..)
   , PubrecPacket(..)
@@ -15,16 +34,6 @@ module Network.MQTT.Packet
   , PingreqPacket(..)
   , PingrespPacket(..)
   , DisconnectPacket(..)
-
-  , ConnackReturnCode(..)
-  , Message(..)
-  , QoS(..)
-  , ClientIdentifier(..)
-  , PacketIdentifier(..)
-  , UserName(..)
-  , Password(..)
-  , Topic(..)
-  , TopicFilter(..)
   ) where
 
 import Data.Word (Word16, Word8)
@@ -32,10 +41,75 @@ import Data.Text (Text)
 import Data.ByteString (ByteString)
 import GHC.Generics (Generic)
 
+-- | A client identifier.
+--
+-- The client identifier is an arbitrary Unicode string. The MQTT
+-- server associates client state with the client identifier and there
+-- can be no clients with the client identifier connected to the same
+-- server simultaneously.
+--
+-- A client may supply an empty client identifier. In that case, the
+-- server won't store any state among the connections. (Note that
+-- server may not support empty client identifiers.)
+newtype ClientIdentifier = ClientIdentifier { unClientIdentifier :: Text }
+  deriving (Eq, Show, Generic)
+
+-- | User name.
+--
+-- User name is used for MQTT authentication. It's not mandatory,
+-- however, and the broker may use a different authentication method
+-- (e.g., authorization with certificates over TLS).
+newtype UserName = UserName { unUserName :: Text }
+  deriving (Eq, Show, Generic)
+
+-- | User password.
+--
+-- User password is an arbitrary binary data (i.e., it shouldn't be
+-- Unicode string).
+newtype Password = Password { unPassword :: ByteString }
+  deriving (Eq, Show, Generic)
+
+-- | MQTT Topic Name.
+--
+-- MQTT topic is a list of topic levels separated by the topic level
+-- separator (\'/'). Topic name MUST NOT include wildcards.
+newtype Topic = Topic { unTopic :: Text }
+  deriving (Eq, Show)
+
+-- | MQTT Topic Filter.
+--
+-- MQTT topic filters are largely similar to topic names, but may
+-- include wildcards.
+--
+-- There are two wildcards:
+-- - multi-level wildcard
+-- - single-level wildcard
+--
+-- Multi-level wildcard is the \'#' character. It matches any number
+-- of levels within topic and must be the last character specified in
+-- the topic filter.
+--
+-- Single-level wildcard is the \'+' character. It matches only one
+-- topic level.
+--
+-- Both wildcards occupy entire level of the filter. (i.e.,
+-- \"hello/wor+ld" is not a valid topic filter.)
+newtype TopicFilter = TopicFilter { unTopicFilter :: Text }
+  deriving (Eq, Show)
+
+-- | Quality of Service level.
+--
+-- MQTT defines three QoS levels.
+--
+-- Note that that's sender who determines the QoS level of the
+-- message. For example, if the client subscribes to a topic with QoS
+-- 2 level, and another client publishes message with the QoS 1 level,
+-- the message will be delivered as a QoS 1 level message (i.e., it
+-- may arrive multiple times).
 data QoS
-  = QoS0
-  | QoS1
-  | QoS2
+  = QoS0 -- ^ QoS 0 - At most once delivery
+  | QoS1 -- ^ QoS 1 - At least once delivery
+  | QoS2 -- ^ QoS 2 - Exactly once delivery
   deriving (Eq, Show, Generic)
 
 instance Enum QoS where
@@ -48,31 +122,34 @@ instance Enum QoS where
   fromEnum QoS1 = 1
   fromEnum QoS2 = 2
 
-newtype ClientIdentifier = ClientIdentifier { unClientIdentifier :: Text }
-  deriving (Eq, Show, Generic)
+-- | Application message.
+--
+-- That's actual application message a client wants to publish to the
+-- specific topic.
+data Message
+  = Message{
+    -- | A topic the message is published to.
+      messageTopic   :: !Topic
+
+    -- | Application-level payload
+    , messageMessage :: !ByteString
+
+    -- | Message QoS.
+    , messageQoS     :: !QoS
+
+    -- | Should message be retained?
+    --
+    -- Retain message is attached to the topic. If the new client
+    -- subscribes to the topic it will receive the retained message
+    -- immediately.
+    --
+    -- Retain messages don't accumulate. There can be only one
+    -- retained message per a topic.
+    , messageRetain  :: !Bool
+    } deriving (Eq, Show, Generic)
 
 newtype PacketIdentifier = PacketIdentifier { unPacketIdentifier :: Word16 }
   deriving (Eq, Show, Generic)
-
-newtype UserName = UserName { unUserName :: Text }
-  deriving (Eq, Show, Generic)
-
-newtype Password = Password { unPassword :: ByteString }
-  deriving (Eq, Show, Generic)
-
-newtype Topic = Topic { unTopic :: Text }
-  deriving (Eq, Show)
-
-newtype TopicFilter = TopicFilter { unTopicFilter :: Text }
-  deriving (Eq, Show)
-
-data Message
-  = Message
-    { messageQoS     :: !QoS
-    , messageRetain  :: !Bool
-    , messageTopic   :: !Topic
-    , messageMessage :: !ByteString
-    } deriving (Eq, Show, Generic)
 
 data Packet
   = CONNECT ConnectPacket
