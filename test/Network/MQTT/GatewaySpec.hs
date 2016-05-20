@@ -9,7 +9,7 @@ import           Control.Monad.Reader (ReaderT, asks, runReaderT)
 
 import qualified Data.Text as T
 
-import qualified Network.MQTT.Gateway as Gateway (runOnSocket, defaultMQTTAddr)
+import qualified Network.MQTT.Gateway as Gateway
 import           Network.MQTT.Packet
 import           Network.MQTT.Utils
 
@@ -191,11 +191,12 @@ data ClientConnection =
 type CCMonad a = ReaderT ClientConnection IO a
 
 withServer :: (AddrInfo -> IO a) -> IO a
-withServer x =
+withServer x = do
+  gw <- Gateway.newGateway
   bracket (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
     bind sock (addrAddress addr)
     listen sock 5
-    withThread (Gateway.runOnSocket sock) $ do
+    withThread (Gateway.listenOnSocket gw sock) $ do
       port <- socketPort sock
       x Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet port 0 }
   where
