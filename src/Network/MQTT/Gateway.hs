@@ -5,18 +5,12 @@ module Network.MQTT.Gateway
   ) where
 
 import           Control.Concurrent (forkIO, forkIOWithUnmask)
-import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, readTQueue, writeTQueue, writeTVar)
+import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, writeTQueue, writeTVar)
 import           Control.Exception (Exception, allowInterrupt, bracket, finally, mask_, throwIO, SomeException, try)
 
 import           Control.Monad (forever, guard, when, unless)
 
-import           Data.ByteString.Builder.Extra (flush)
-
-import           Data.Monoid ((<>))
-
-import qualified Network.MQTT.Encoder as MQTT
 import qualified Network.MQTT.Packet as MQTT
-import qualified Network.MQTT.Parser as MQTT
 
 import           Network.MQTT.Utils
 
@@ -24,7 +18,6 @@ import           Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(S
 
 import           System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as S
-import qualified System.IO.Streams.Attoparsec as S
 
 import           System.Log.Logger (debugM)
 
