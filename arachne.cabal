@@ -1,8 +1,8 @@
-name:                mqtt-broker
+name:                arachne
 version:             0.1.0.0
-homepage:            https://github.com/rasendubi/mqtt-broker
-bug-reports:         https://github.com/rasendubi/mqtt-broker/issues
-synopsis:            A broker for MQTT protocol
+homepage:            https://github.com/rasendubi/arachne
+bug-reports:         https://github.com/rasendubi/arachne/issues
+synopsis:            A set of tools for MQTT protocol
 license:             BSD3
 license-file:        LICENSE
 author:              Alexey Shmalko <rasen.dubi@gmail.com>
@@ -36,7 +36,7 @@ executable mqtt-gateway
   hs-source-dirs:      mqtt-gateway
   build-depends:       base >=4.8.1 && <4.9
                      , hslogger >=1.2.9 && <1.3
-                     , mqtt-broker
+                     , arachne
                      , network >=2.6.2 && <2.7
   default-language:    Haskell2010
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
@@ -49,7 +49,7 @@ test-suite spec
                        Network.MQTT.EncoderSpec
                        Network.MQTT.GatewaySpec
   build-depends:       base >=4.8.1 && <4.9
-                     , mqtt-broker
+                     , arachne
                      , attoparsec >=0.12.1 && <0.14
                      , bytestring >=0.10.6 && <0.11
                      , text >=1.2.1 && <1.3
@@ -59,7 +59,7 @@ test-suite spec
                      , io-streams >=1.3.5 && <1.4
                      , mtl >=2.2.1 && <2.3
                      , network >=2.6.2 && <2.7
-                     , smallcheck >=1.1.1 && < 1.2
+                     , smallcheck >=1.1.1 && <1.2
                      , smallcheck-series >=0.5.1 && <0.6
                      , random >=1.1 && <1.2
                      , vector >=0.11 && <0.12
@@ -67,4 +67,4 @@ test-suite spec
 
 source-repository head
   type:     git
-  location: https://github.com/rasendubi/mqtt-broker
+  location: https://github.com/rasendubi/arachne
