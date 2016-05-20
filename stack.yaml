@@ -7,6 +7,11 @@ extra-deps:
 - attoparsec-binary-0.2
 - smallcheck-series-0.5.1
 
+nix:
+  enable: false
+  packages:
+    - zlib
+
 flags: {}
 
 extra-package-dbs: []
