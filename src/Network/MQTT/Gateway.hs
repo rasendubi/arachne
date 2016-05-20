@@ -115,22 +115,29 @@ clientReceiver gw state is = do
       debugM "MQTT.Gateway" $ "Received: " ++ show p
       cont <- atomically $ do
         case p of
-          MQTT.CONNECT MQTT.ConnectPacket{ MQTT.connectClientIdentifier = clientId } -> do
+          MQTT.CONNECT connect -> do
             -- Accept all connections.
             connected <- readTVar (gcConnected state)
+
+            -- TODO ExceptT
             if connected
               then return False
               else do
-                writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK (MQTT.ConnackPacket False MQTT.Accepted))
-                writeTVar (gcConnected state) True
+                if MQTT.connectProtocolLevel connect /= 4
+                  then do
+                    writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.UnacceptableProtocol)
+                    return False
+                  else do
+                    writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.Accepted)
+                    writeTVar (gcConnected state) True
 
-                mx <- STM.Map.lookup clientId (gClients gw)
-                STM.Map.insert state clientId (gClients gw)
-                case mx of
-                  Nothing -> return ()
-                  Just x -> writeTQueue (gcSendQueue x) Nothing
+                    mx <- STM.Map.lookup (MQTT.connectClientIdentifier connect) (gClients gw)
+                    STM.Map.insert state (MQTT.connectClientIdentifier connect) (gClients gw)
+                    case mx of
+                      Nothing -> return ()
+                      Just x -> writeTQueue (gcSendQueue x) Nothing
 
-                return True
+                    return True
 
           MQTT.PINGREQ _ -> do
             connected <- readTVar (gcConnected state)

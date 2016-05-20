@@ -3,6 +3,7 @@ module Network.MQTT.GatewaySpec (spec, debugTests) where
 import           Control.Concurrent (forkIO, killThread, threadDelay)
 import           Control.Exception (bracket)
 
+import           Control.Monad (forM_)
 import           Control.Monad.Cont (liftIO)
 import           Control.Monad.Reader (ReaderT, asks, runReaderT)
 
@@ -167,6 +168,21 @@ spec = do
 
         closeClient c1
         closeClient c2
+
+    it "MQTT-3.1.2-2: The Server MUST respond to the CONNECT Packet with a CONNACK return code 0x01 (unacceptable protocol level) and then disconnect the Client if the Protocol Level is not supported by the Server" $ do
+      withServer testAddr $ do
+        forM_ ([0x00 .. 0x03] ++ [0x05 .. 0xff]) $ \protocolLevel ->
+          withClient testAddr $ do
+            writePacket (CONNECT $ ConnectPacket
+                         { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
+                         , connectProtocolLevel = protocolLevel
+                         , connectWillMsg = Nothing
+                         , connectUserName = Nothing
+                         , connectPassword = Nothing
+                         , connectCleanSession = True
+                         , connectKeepAlive = 0
+                         })
+            expectPacket (CONNACK $ ConnackPacket False UnacceptableProtocol)
 
 data ClientConnection =
   ClientConnection
