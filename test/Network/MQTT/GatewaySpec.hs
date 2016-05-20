@@ -13,7 +13,7 @@ import           Data.Monoid ((<>))
 import qualified Data.Text as T
 
 import           Network.MQTT.Encoder (encodePacket)
-import           Network.MQTT.Gateway (runServer, defaultMQTTAddr)
+import qualified Network.MQTT.Gateway as Gateway (runOnAddr, defaultMQTTAddr)
 import           Network.MQTT.Packet
 import           Network.MQTT.Parser (parsePacket)
 import           Network.MQTT.Utils
@@ -30,7 +30,7 @@ import           System.Log.Logger (debugM, rootLoggerName, setLevel, updateGlob
 import           Test.Hspec
 
 testAddr :: AddrInfo
-testAddr = defaultMQTTAddr{ addrAddress = SockAddrInet (fromInteger 27200) 0 }
+testAddr = Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet (fromInteger 27200) 0 }
 
 debugTests :: IO ()
 debugTests = updateGlobalLogger rootLoggerName (setLevel DEBUG)
@@ -86,7 +86,7 @@ type CCMonad a = ReaderT ClientConnection IO a
 withServer :: AddrInfo -> IO a -> IO a
 withServer addr x =
   -- give a sec to start server
-  withThread (runServer addr) (threadDelay 100 >> x)
+  withThread (Gateway.runOnAddr addr) (threadDelay 100 >> x)
 
 withClient :: AddrInfo -> (CCMonad a) -> IO a
 withClient addr m = bracket (openClient addr) close $ \s -> do

@@ -1,12 +1,17 @@
 {-# LANGUAGE AutoDeriveTypeable #-}
 module Network.MQTT.Gateway
-  ( runServer
+  ( newGateway
+  , handleOnAddr
+  , runOnAddr
   , defaultMQTTAddr
   ) where
 
 import           Control.Concurrent (forkIO, forkIOWithUnmask)
 import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueue, newTVar, readTVar, writeTQueue, writeTVar)
 import           Control.Exception (Exception, allowInterrupt, bracket, finally, mask_, throwIO, SomeException, try)
+
+import qualified STMContainers.Map as STM (Map)
+import qualified STMContainers.Map as STM.Map
 
 import           Control.Monad (forever, guard, when, unless)
 
@@ -20,11 +25,23 @@ import           System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as S
 
 import           System.Log.Logger (debugM)
+import Control.Concurrent (ThreadId)
 
 data MQTTError = MQTTError
   deriving (Show)
 
 instance Exception MQTTError
+
+data Gateway =
+  Gateway
+  { gClients :: STM.Map MQTT.ClientIdentifier GatewayClient
+  }
+
+newGatewaySTM :: STM Gateway
+newGatewaySTM = Gateway <$> STM.Map.new
+
+newGateway :: IO Gateway
+newGateway = Gateway <$> STM.Map.newIO
 
 data GatewayClient =
   GatewayClient
@@ -35,8 +52,8 @@ data GatewayClient =
 newGatewayClient :: STM GatewayClient
 newGatewayClient = GatewayClient <$> newTQueue <*> newTVar False
 
-runServer :: AddrInfo -> IO ()
-runServer addr = do
+handleOnAddr :: Gateway -> AddrInfo -> IO ()
+handleOnAddr gw addr = do
   bracket (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
     when (isSupportedSocketOption ReusePort) $
       setSocketOption sock ReusePort 1
@@ -57,9 +74,14 @@ runServer addr = do
 
       -- New thread is run in masked state.
       forkIOWithUnmask $ \unmask -> do
-        res <- unmask (try (handleClient s a)) :: IO (Either SomeException ())
+        res <- unmask (try (handleClient gw s a)) :: IO (Either SomeException ())
         close s
         debugM "MQTT.Gateway" $ "handleClient exited with " ++ show res
+
+runOnAddr :: AddrInfo -> IO ()
+runOnAddr addr = do
+  gw <- newGateway
+  handleOnAddr gw addr
 
 defaultMQTTAddr :: AddrInfo
 defaultMQTTAddr = AddrInfo{ addrFlags = []
@@ -72,8 +94,8 @@ defaultMQTTAddr = AddrInfo{ addrFlags = []
 
 -- Don't need to close socket, as it's done in 'runServer' in a safer
 -- way.
-handleClient :: Socket -> SockAddr -> IO ()
-handleClient sock addr = do
+handleClient :: Gateway -> Socket -> SockAddr -> IO ()
+handleClient gw sock addr = do
   debugM "MQTT.Gateway" $ "Connected: " ++ show addr
 
   state <- atomically newGatewayClient
