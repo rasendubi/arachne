@@ -18,6 +18,7 @@ library
                        Network.MQTT.Encoder
                        Network.MQTT.SN.Packet
                        Network.MQTT.SN.Parser
+                       Network.MQTT.SN.Encoder
   build-depends:       base >=4.8.1 && <4.9
                      , attoparsec >=0.12.1 && <0.14
                      , attoparsec-binary >=0.2 && <0.3
