@@ -40,34 +40,34 @@ import Data.ByteString (ByteString)
 
 -- | General MQTT-SN packet that encapsulates all other packets.
 data Packet
-  = ADVERTISE     AdvertisePacket
-  | SEARCHGW      SearchgwPacket
-  | GWINFO        GwinfoPacket
-  | CONNECT       ConnectPacket
-  | CONNACK       ConnackPacket
-  | WILLTOPICREQ  WilltopicreqPacket
-  | WILLTOPIC     WilltopicPacket
-  | WILLMSGREQ    WillmsgreqPacket
-  | WILLMSG       WillmsgPacket
-  | REGISTER      RegisterPacket
-  | REGACK        RegackPacket
-  | PUBLISH       PublishPacket
-  | PUBACK        PubackPacket
-  | PUBREC        PubrecPacket
-  | PUBREL        PubrelPacket
-  | PUBCOMP       PubcompPacket
-  | SUBSCRIBE     SubscribePacket
-  | SUBACK        SubackPacket
-  | UNSUBSCRIBE   UnsubscribePacket
-  | UNSUBACK      UnsubackPacket
-  | PINGREQ       PingreqPacket
-  | PINGRESP      PingrespPacket
-  | DISCONNECT    DisconnectPacket
-  | WILLTOPICUPD  WilltopicupdPacket
-  | WILLMSGUPD    WillmsgupdPacket
-  | WILLTOPICRESP WilltopicrespPacket
-  | WILLMSGRESP   WillmsgrespPacket
-  | FORWARD       ForwardPacket
+  = ADVERTISE     !AdvertisePacket
+  | SEARCHGW      !SearchgwPacket
+  | GWINFO        !GwinfoPacket
+  | CONNECT       !ConnectPacket
+  | CONNACK       !ConnackPacket
+  | WILLTOPICREQ  !WilltopicreqPacket
+  | WILLTOPIC     !WilltopicPacket
+  | WILLMSGREQ    !WillmsgreqPacket
+  | WILLMSG       !WillmsgPacket
+  | REGISTER      !RegisterPacket
+  | REGACK        !RegackPacket
+  | PUBLISH       !PublishPacket
+  | PUBACK        !PubackPacket
+  | PUBREC        !PubrecPacket
+  | PUBREL        !PubrelPacket
+  | PUBCOMP       !PubcompPacket
+  | SUBSCRIBE     !SubscribePacket
+  | SUBACK        !SubackPacket
+  | UNSUBSCRIBE   !UnsubscribePacket
+  | UNSUBACK      !UnsubackPacket
+  | PINGREQ       !PingreqPacket
+  | PINGRESP      !PingrespPacket
+  | DISCONNECT    !DisconnectPacket
+  | WILLTOPICUPD  !WilltopicupdPacket
+  | WILLMSGUPD    !WillmsgupdPacket
+  | WILLTOPICRESP !WilltopicrespPacket
+  | WILLMSGRESP   !WillmsgrespPacket
+  | FORWARD       !ForwardPacket
   deriving (Eq, Show)
 
 -- | The ADVERTISE message is broadcasted periodically by a gateway to
