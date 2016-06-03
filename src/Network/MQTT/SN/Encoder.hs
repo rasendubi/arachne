@@ -49,8 +49,8 @@ encodePacket p = case p of
   PINGRESP PingrespPacket               -> withLength 0x17 [ ]
   DISCONNECT DisconnectPacket{..}       -> withLength 0x18 [ maybe' w16 disconnectDuration ]
   WILLTOPICUPD WilltopicupdPacket{..}   -> withLength 0x1a [ w8 willtopicupdFlags, bs willtopicupdWillTopic ]
-  WILLMSGUPD WillmsgupdPacket{..}       -> withLength 0x1b [ bs willmsgupdWillMsg ]
-  WILLTOPICRESP WilltopicrespPacket{..} -> withLength 0x1c [ w8 willtopicrespReturnCode ]
+  WILLTOPICRESP WilltopicrespPacket{..} -> withLength 0x1b [ w8 willtopicrespReturnCode ]
+  WILLMSGUPD WillmsgupdPacket{..}       -> withLength 0x1c [ bs willmsgupdWillMsg ]
   WILLMSGRESP WillmsgrespPacket{..}     -> withLength 0x1d [ w8 willmsgrespReturnCode ]
   FORWARD ForwardPacket{..}             -> withLength 0xfe [ w8 forwardCtrl, bs forwardWirelessNodeId] <> bs forwardMessage
 

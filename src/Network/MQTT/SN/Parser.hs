@@ -16,7 +16,7 @@ import Data.Word (Word16)
 
 parsePacket :: Parser Packet
 parsePacket = do
-  len <- parseLength
+  len <- subtract 1 <$> parseLength
   msgType <- anyWord8
   case msgType of
     0x00 -> ADVERTISE     <$> parseAdvertise     len
@@ -53,10 +53,11 @@ parsePacket = do
 parseLength :: Parser Word16
 parseLength = do
   octet1 <- fromIntegral <$> anyWord8
+  guard (octet1 /= 0) <?> "Packet langth can't be zero"
   res <- if octet1 == 0x01
     then subtract 3 <$> anyWord16be
     else return (octet1 - 1)
-  guard (res >= 2) <?> "Packet length can't be zero or one"
+  guard (res >= 1) <?> "Packet length can't be zero or one"
   return res
 
 parseAdvertise :: Word16 -> Parser AdvertisePacket
@@ -73,10 +74,10 @@ parseSearchgw len = do
 
 parseGwinfo :: Word16 -> Parser GwinfoPacket
 parseGwinfo len = do
-  guard (len == 1 || len == 3)
+  guard (len > 0) <?> "Payload length can't be zero for GWINFO packet"
   gwinfoGwId <- anyWord8
-  gwinfoGwAdd <- if len == 3
-    then Just <$> take (fromIntegral len - 2)
+  gwinfoGwAdd <- if len > 1
+    then Just <$> take (fromIntegral len - 1)
     else return Nothing
   return GwinfoPacket{..}
 

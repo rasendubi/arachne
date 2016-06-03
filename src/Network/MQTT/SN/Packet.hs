@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 -- | This module declares all MQTT-SN packet types.
 --
 -- For more info on MQTT-SN, read
@@ -38,6 +39,8 @@ module Network.MQTT.SN.Packet
 import Data.Word (Word16, Word8)
 import Data.ByteString (ByteString)
 
+import GHC.Generics (Generic)
+
 -- | General MQTT-SN packet that encapsulates all other packets.
 data Packet
   = ADVERTISE     !AdvertisePacket
@@ -68,7 +71,7 @@ data Packet
   | WILLTOPICRESP !WilltopicrespPacket
   | WILLMSGRESP   !WillmsgrespPacket
   | FORWARD       !ForwardPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 -- | The ADVERTISE message is broadcasted periodically by a gateway to
 -- advertise its presence. The time interval until the next broadcast
@@ -82,7 +85,7 @@ data AdvertisePacket
       -- | Time interval until the next ADVERTISE is broadcasted by
       -- this gateway.
     , advertiseDuration :: !Word16
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The SEARCHGW message is broadcasted by a client when it searches
 -- for a GW. The broadcast radius of the SEARCHGW is limited and
@@ -97,7 +100,7 @@ data SearchgwPacket
     {
       -- | The broadcast radius of this message.
       searchgwRadius :: !Word8
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The GWINFO message is sent as response to a SEARCHGW message
 -- using the broadcast service of the underlying layer, with the
@@ -115,7 +118,7 @@ data GwinfoPacket
       -- | Address of the indicated GW; optional, only included if
       -- message is sent by a client
     , gwinfoGwAdd :: !(Maybe ByteString)
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The CONNECT message is sent by a client to setup a connection.
 data ConnectPacket
@@ -142,7 +145,7 @@ data ConnectPacket
       -- character long string which uniquely identifies the client to
       -- the server.
     , connectClientId :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The CONNACK message is sent by the server in response to a
 -- connection request from a client.
@@ -151,13 +154,13 @@ data ConnackPacket
     {
       -- | CONNACK return code.
       connackReturnCode :: !Word8
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The WILLTOPICREQ message is sent by the GW to request a client
 -- for sending the Will topic name.
 data WilltopicreqPacket
   = WilltopicreqPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 -- | The WILLTOPIC message is sent by a client as response to the
 -- WILLTOPICREQ message for transferring its Will topic name to the
@@ -185,13 +188,13 @@ data WilltopicPacket
 
       -- | Contains the Will topic name.
     , willtopicWillTopic :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The WILLMSGREQ message is sent by the GW to request a client for
 -- sending the Will message.
 data WillmsgreqPacket
   = WillmsgreqPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 -- | The WILLMSG message is sent by a client as response to a
 -- WILLMSGREQ for transferring its Will message to the GW.
@@ -200,7 +203,7 @@ data WillmsgPacket
     {
       -- | Contains the Will message.
       willmsgWillMsg :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The REGISTER message is sent by a client to a GW for requesting a
 -- topic id value for the included topic name. It is also sent by a GW
@@ -220,7 +223,7 @@ data RegisterPacket
 
       -- | Contains the topic name.
     , registerTopicName :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The REGACK message is sent by a client or by a GW as an
 -- acknowledgment to the receipt and processing of a REGISTER message.
@@ -237,7 +240,7 @@ data RegackPacket
 
       -- | \"accepted\", or rejection reason.
     , regackReturnCode :: !Word8
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | This message is used by both clients and gateways to publish data
 -- for a certain topic.
@@ -268,7 +271,7 @@ data PublishPacket
 
       -- | The published data.
     , publishData :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The PUBACK message is sent by a gateway or a client as an
 -- acknowledgment to the receipt and processing of a PUBLISH message
@@ -288,7 +291,7 @@ data PubackPacket
 
       -- | \"accepted\", or rejection reason.
     , pubackReturnCode :: !Word8
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | As with MQTT, the PUBREC is used in conjunction with a PUBLISH
 -- message with QoS level 2.
@@ -298,7 +301,7 @@ data PubrecPacket
       -- | Same value as the one contained in the corresponding
       -- PUBLISH message.
       pubrecMsgId :: !Word16
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | As with MQTT, the PUBREL is used in conjunction with a PUBLISH
 -- message with QoS level 2.
@@ -308,7 +311,7 @@ data PubrelPacket
       -- | Same value as the one contained in the corresponding
       -- PUBLISH message.
       pubrelMsgId :: !Word16
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | As with MQTT, the PUBCOMP is used in conjunction with a PUBLISH
 -- message with QoS level 2.
@@ -318,7 +321,7 @@ data PubcompPacket
       -- | Same value as the one contained in the corresponding
       -- PUBLISH message.
       pubcompMsgId :: !Word16
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The SUBSCRIBE message is used by a client to subscribe to a
 -- certain topic name.
@@ -350,7 +353,7 @@ data SubscribePacket
       -- | Contains topic name, topic id, or short topic name as
       -- indicated in the TopicIdType field.
     , subscribeTopic :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The SUBACK message is sent by a gateway to a client as an
 -- acknowledgment to the receipt and processing of a SUBSCRIBE
@@ -383,7 +386,7 @@ data SubackPacket
 
       -- | \"accepted\", or rejection reason.
     , subackReturnCode :: !Word8
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | An UNSUBSCRIBE message is sent by the client to the GW to
 -- unsubscribe from named topics.
@@ -413,7 +416,7 @@ data UnsubscribePacket
       -- | Contains topic name, pre-defined topic id, or short topic
       -- name as indicated in the TopicIdType field.
     , unsubscribeTopic :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | An UNSUBACK message is sent by a GW to acknowledge the receipt
 -- and processing of an UNSUBSCRIBE message.
@@ -423,7 +426,7 @@ data UnsubackPacket
       -- | Same value as the one contained in the corresponding
       -- UNSUBSCRIBE message.
       unsubackMsgId :: !Word16
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | As with MQTT, the PINGREQ message is an \"are you alive\" message
 -- that is sent from or received by a connected client.
@@ -435,7 +438,7 @@ data PingreqPacket
       -- \"awake\" state and is waiting for messages sent by the
       -- server/gateway.
       pingreqClientId :: !(Maybe ByteString)
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | As with MQTT, a PINGRESP message is the response to a PINGREQ
 -- message and means \"yes I am alive\". Keep Alive messages flow in
@@ -447,7 +450,7 @@ data PingreqPacket
 -- client.
 data PingrespPacket
   = PingrespPacket
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 -- | As with MQTT, the DISCONNECT message is sent by a client to
 -- indicate that it wants to close the connection. The gateway will
@@ -470,7 +473,7 @@ data DisconnectPacket
       -- optional and is included by a \"sleeping\" client that wants
       -- to go the \"asleep\" state.
       disconnectDuration :: !(Maybe Word16)
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The WILLTOPICUPD message is sent by a client to update its Will
 -- topic name stored in the GW/server.
@@ -497,7 +500,7 @@ data WilltopicupdPacket
 
       -- | Contains the Will topic name.
     , willtopicupdWillTopic :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The WILLMSGUPD message is sent by a client to update its Will
 -- message stored in the GW/server.
@@ -506,7 +509,7 @@ data WillmsgupdPacket
     {
       -- | Contains the Will message.
       willmsgupdWillMsg :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The WILLTOPICRESP message is sent by a GW to acknowledge the
 -- receipt and processing of an WILLTOPICUPD message.
@@ -515,7 +518,7 @@ data WilltopicrespPacket
     {
       -- | \"accepted\", or rejection reason.
       willtopicrespReturnCode :: !Word8
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | The WILLMSGRESP message is sent by a GW to acknowledge the
 -- receipt and processing of an WILLMSGUPD message.
@@ -524,7 +527,7 @@ data WillmsgrespPacket
     {
       -- | \"accepted\", or rejection reason.
       willmsgrespReturnCode :: !Word8
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
 
 -- | MQTT-SN clients can also access a GW via a forwarder in case the
 -- GW is not directly attached to their WSNs. The forwarder simply
@@ -552,4 +555,4 @@ data ForwardPacket
 
       -- | The MQTT-SN message.
     , forwardMessage :: !ByteString
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic)
