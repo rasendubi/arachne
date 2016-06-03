@@ -34,6 +34,7 @@ test-suite spec
   main-is:             Spec.hs
   other-modules:       Network.MQTT.ParserSpec
                        Network.MQTT.EncoderSpec
+                       Network.MQTT.SN.ParserSpec
                        Network.MQTT.SN.EncoderSpec
   build-depends:       base >=4.8.1 && <4.9
                      , arachne

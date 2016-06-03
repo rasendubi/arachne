@@ -24,6 +24,15 @@ spec = do
       let bytes = toStrict . toLazyByteString $ encodePacket p
       in valid p ==> parseOnly parsePacket bytes == Right p
 
+  describe "encode" $ do
+    it "properly encodes maximum one-byte-length packet" $ do
+      toStrict (toLazyByteString . encodePacket $ PUBLISH $ PublishPacket 0x00 0xabcd 0xef01 (BS.pack [1 .. 248]))
+        `shouldBe` BS.pack ([255, 0x0c, 0x00, 0xab, 0xcd, 0xef, 0x01] ++ [1 .. 248])
+
+    it "properly encodes big payload packets" $ do
+      toStrict (toLazyByteString . encodePacket $ PUBLISH $ PublishPacket 0x00 0xabcd 0xef01 (BS.pack [1 .. 249]))
+        `shouldBe` BS.pack ([0x01, 0x01, 0x02, 0x0c, 0x00, 0xab, 0xcd, 0xef, 0x01] ++ [1 .. 249])
+
 valid :: Packet -> Bool
 valid (PINGREQ p) = pingreqClientId p /= Just BS.empty
 valid (GWINFO p) = gwinfoGwAdd p /= Just BS.empty
