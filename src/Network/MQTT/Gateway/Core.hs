@@ -16,10 +16,10 @@ module Network.MQTT.Gateway.Core
   ) where
 
 import           Control.Concurrent (forkIO, killThread)
-import           Control.Concurrent.STM (TQueue, TVar, atomically, readTVar, writeTQueue, writeTVar, newTQueueIO, newTVarIO)
+import           Control.Concurrent.STM (STM, TQueue, TVar, atomically, readTVar, writeTQueue, writeTVar, newTQueueIO, newTVarIO, throwSTM)
 import           Control.Exception (Exception, finally, throwIO, SomeException, try)
 
-import           Control.Monad (unless)
+import           Control.Monad (unless, when)
 
 import qualified Network.MQTT.Packet as MQTT
 
@@ -81,49 +81,50 @@ clientReceiver gw state is = do
     handler Nothing  = return ()
     handler (Just p) = do
       debugM "MQTT.Gateway" $ "Received: " ++ show p
-      cont <- atomically $ do
-        case p of
-          MQTT.CONNECT connect -> do
+      case p of
+        MQTT.CONNECT connect -> do
+          stop <- atomically $ do
             -- Accept all connections.
             connected <- readTVar (gcConnected state)
+            when connected $ throwSTM MQTTError
 
-            -- TODO ExceptT
-            if connected
-              then return False
-              else do
-                if MQTT.connectProtocolLevel connect /= 4
-                  then do
-                    writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.UnacceptableProtocol)
-                    return False
-                  else do
-                    writeTQueue (gcSendQueue state) (Just $ MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.Accepted)
-                    writeTVar (gcConnected state) True
-
-                    mx <- STM.Map.lookup (MQTT.connectClientIdentifier connect) (gClients gw)
-                    STM.Map.insert state (MQTT.connectClientIdentifier connect) (gClients gw)
-                    case mx of
-                      Nothing -> return ()
-                      Just x -> writeTQueue (gcSendQueue x) Nothing
-
-                    return True
-
-          MQTT.PINGREQ _ -> do
-            connected <- readTVar (gcConnected state)
-            writeTQueue (gcSendQueue state) $
-              if connected then Just (MQTT.PINGRESP MQTT.PingrespPacket) else Nothing
-            return connected
-          MQTT.SUBSCRIBE subscribe -> do
-            connected <- readTVar (gcConnected state)
-            if connected
+            if MQTT.connectProtocolLevel connect /= 4
               then do
-                writeTQueue (gcSendQueue state) $
-                  Just (MQTT.SUBACK $
-                         MQTT.SubackPacket (MQTT.subscribePacketIdentifier subscribe) [ Just MQTT.QoS0 ])
+                sendPacket state (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.UnacceptableProtocol)
                 return True
-              else return False
-          _ -> return True
-      debugM "MQTT.Gateway" $ "Asserting: " ++ show cont
-      unless cont $ throwIO MQTTError
+              else do
+                sendPacket state (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.Accepted)
+                writeTVar (gcConnected state) True
+
+                mx <- STM.Map.lookup (MQTT.connectClientIdentifier connect) (gClients gw)
+                STM.Map.insert state (MQTT.connectClientIdentifier connect) (gClients gw)
+                case mx of
+                  Nothing -> return ()
+                  Just x -> writeTQueue (gcSendQueue x) Nothing
+
+                return False
+          when stop $ throwIO MQTTError
+
+        MQTT.PINGREQ _ -> atomically $ do
+          checkConnected state
+          sendPacket state (MQTT.PINGRESP MQTT.PingrespPacket)
+
+        MQTT.SUBSCRIBE subscribe -> atomically $ do
+          checkConnected state
+          sendPacket state $
+            MQTT.SUBACK (MQTT.SubackPacket
+                          (MQTT.subscribePacketIdentifier subscribe)
+                          [ Just MQTT.QoS0 ])
+        _ -> return ()
+
+sendPacket :: GatewayClient -> MQTT.Packet -> STM ()
+sendPacket state p = do
+  writeTQueue (gcSendQueue state) (Just p)
+
+checkConnected :: GatewayClient -> STM ()
+checkConnected state = do
+  connected <- readTVar $ gcConnected state
+  unless connected $ throwSTM MQTTError
 
 clientSender :: OutputStream MQTT.Packet -> TQueue (Maybe MQTT.Packet) -> IO ()
 clientSender os queue = do

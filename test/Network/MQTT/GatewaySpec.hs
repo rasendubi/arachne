@@ -213,6 +213,16 @@ spec = do
             , subackResponses = [ Just QoS0 ]
             }
 
+    it "should reject subscribe packet if client is not connected" $ do
+      withServer $ \testAddr -> do
+        withClient testAddr $ do
+          writePacket $
+            SUBSCRIBE SubscribePacket
+            { subscribePacketIdentifier = PacketIdentifier 0x01
+            , subscribeTopicFiltersQoS = [ (TopicFilter (T.pack "a"), QoS0) ]
+            }
+          expectConnectionClosed
+
 clientConnect :: String -> CCMonad ()
 clientConnect clientId = do
   writePacket (CONNECT $ ConnectPacket
