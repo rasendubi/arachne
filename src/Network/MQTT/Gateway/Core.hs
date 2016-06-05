@@ -112,6 +112,15 @@ clientReceiver gw state is = do
             writeTQueue (gcSendQueue state) $
               if connected then Just (MQTT.PINGRESP MQTT.PingrespPacket) else Nothing
             return connected
+          MQTT.SUBSCRIBE subscribe -> do
+            connected <- readTVar (gcConnected state)
+            if connected
+              then do
+                writeTQueue (gcSendQueue state) $
+                  Just (MQTT.SUBACK $
+                         MQTT.SubackPacket (MQTT.subscribePacketIdentifier subscribe) [ Just MQTT.QoS0 ])
+                return True
+              else return False
           _ -> return True
       debugM "MQTT.Gateway" $ "Asserting: " ++ show cont
       unless cont $ throwIO MQTTError

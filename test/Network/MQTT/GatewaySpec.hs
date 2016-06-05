@@ -181,6 +181,51 @@ spec = do
                          })
             expectPacket (CONNACK $ ConnackPacket False UnacceptableProtocol)
 
+    it "should accept subscribe packet" $ do
+      withServer $ \testAddr -> do
+        withClient testAddr $ do
+          clientConnect "client1"
+          writePacket $
+            SUBSCRIBE SubscribePacket
+            { subscribePacketIdentifier = PacketIdentifier 0x01
+            , subscribeTopicFiltersQoS = [ (TopicFilter (T.pack "a"), QoS0) ]
+            }
+          expectPacket $
+            SUBACK SubackPacket
+            { subackPacketIdentifier = PacketIdentifier 0x01
+            , subackResponses = [ Just QoS0 ]
+            }
+
+    it "should accept subscribe with multiple topics" $ do
+      withServer $ \testAddr -> do
+        withClient testAddr $ do
+          clientConnect "client1"
+          writePacket $
+            SUBSCRIBE SubscribePacket
+            { subscribePacketIdentifier = PacketIdentifier 0x01
+            , subscribeTopicFiltersQoS = [ (TopicFilter (T.pack "a"), QoS0)
+                                         , (TopicFilter (T.pack "b"), QoS1)
+                                         ]
+            }
+          expectPacket $
+            SUBACK SubackPacket
+            { subackPacketIdentifier = PacketIdentifier 0x01
+            , subackResponses = [ Just QoS0 ]
+            }
+
+clientConnect :: String -> CCMonad ()
+clientConnect clientId = do
+  writePacket (CONNECT $ ConnectPacket
+                { connectClientIdentifier = ClientIdentifier $ T.pack clientId
+                , connectProtocolLevel = 4
+                , connectWillMsg = Nothing
+                , connectUserName = Nothing
+                , connectPassword = Nothing
+                , connectCleanSession = True
+                , connectKeepAlive = 0
+                })
+  expectPacket (CONNACK $ ConnackPacket False Accepted)
+
 data ClientConnection =
   ClientConnection
   { ccSocket :: Socket
@@ -202,7 +247,7 @@ withServer x = do
   where
     addr = Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet aNY_PORT 0 }
 
-withClient :: AddrInfo -> (CCMonad a) -> IO a
+withClient :: AddrInfo -> CCMonad a -> IO a
 withClient addr m = bracket (openClient addr) closeClient $ runReaderT m
 
 openClient :: AddrInfo -> IO ClientConnection
