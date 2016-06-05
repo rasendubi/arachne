@@ -38,6 +38,10 @@ spec = do
       let tt = TT.insert (topicFilter "") "hello" TT.empty
       TT.lookup (topicFilter "") tt `shouldBe` Just "hello"
 
+    it "overrides old value" $ do
+      let tt = TT.insert (topicFilter "a/b") "y" $ trie [ "a/b" --> "x" ]
+      TT.lookup (topicFilter "a/b") tt `shouldBe` Just "y"
+
   describe "lookup" $ do
     it "doesn't find anything in empty trie" $ do
       TT.lookup (topicFilter "a") (TT.empty :: TT.TopicFilterTrie Int) `shouldBe` Nothing
