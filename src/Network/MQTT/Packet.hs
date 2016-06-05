@@ -154,20 +154,20 @@ newtype PacketIdentifier = PacketIdentifier { unPacketIdentifier :: Word16 }
   deriving (Eq, Show, Generic)
 
 data Packet
-  = CONNECT ConnectPacket
-  | CONNACK ConnackPacket
-  | PUBLISH PublishPacket
-  | PUBACK PubackPacket
-  | PUBREC PubrecPacket
-  | PUBREL PubrelPacket
-  | PUBCOMP PubcompPacket
-  | SUBSCRIBE SubscribePacket
-  | SUBACK SubackPacket
-  | UNSUBSCRIBE UnsubscribePacket
-  | UNSUBACK UnsubackPacket
-  | PINGREQ PingreqPacket
-  | PINGRESP PingrespPacket
-  | DISCONNECT DisconnectPacket
+  = CONNECT     !ConnectPacket
+  | CONNACK     !ConnackPacket
+  | PUBLISH     !PublishPacket
+  | PUBACK      !PubackPacket
+  | PUBREC      !PubrecPacket
+  | PUBREL      !PubrelPacket
+  | PUBCOMP     !PubcompPacket
+  | SUBSCRIBE   !SubscribePacket
+  | SUBACK      !SubackPacket
+  | UNSUBSCRIBE !UnsubscribePacket
+  | UNSUBACK    !UnsubackPacket
+  | PINGREQ     !PingreqPacket
+  | PINGRESP    !PingrespPacket
+  | DISCONNECT  !DisconnectPacket
   deriving (Eq, Show, Generic)
 
 data ConnectPacket
