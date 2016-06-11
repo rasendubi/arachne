@@ -105,11 +105,11 @@ packetHandler state (Just p) = do
     MQTT.PINGREQ _ -> atomically $ do
       sendPacket state (MQTT.PINGRESP MQTT.PingrespPacket)
 
-    MQTT.SUBSCRIBE subscribe -> atomically $ do
+    MQTT.SUBSCRIBE MQTT.SubscribePacket{..} -> atomically $ do
       sendPacket state $
         MQTT.SUBACK (MQTT.SubackPacket
-                      (MQTT.subscribePacketIdentifier subscribe)
-                      [ Just MQTT.QoS0 ])
+                      subscribePacketIdentifier
+                      (fmap (Just . snd) subscribeTopicFiltersQoS))
 
     _ -> return ()
 

@@ -210,7 +210,7 @@ spec = do
           expectPacket $
             SUBACK SubackPacket
             { subackPacketIdentifier = PacketIdentifier 0x01
-            , subackResponses = [ Just QoS0 ]
+            , subackResponses = [ Just QoS0, Just QoS1 ]
             }
 
     it "should reject subscribe packet if client is not connected" $ do
