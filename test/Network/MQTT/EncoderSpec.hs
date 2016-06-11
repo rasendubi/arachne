@@ -34,7 +34,7 @@ spec = do
 
       PUBLISH PublishPacket{ publishDup = True
                            , publishMessage = Message
-                                                (Topic $ T.pack "a/b")
+                                                (TopicName $ T.pack "a/b")
                                                 (BS.pack bigPayload)
                                                 QoS2
                                                 True
@@ -84,7 +84,7 @@ instance Monad m => Serial m ClientIdentifier
 instance Monad m => Serial m PacketIdentifier
 instance Monad m => Serial m UserName
 instance Monad m => Serial m Password
-instance Monad m => Serial m Topic where
-  series = Topic <$> (T.pack . getNonEmpty) <$> series
+instance Monad m => Serial m TopicName where
+  series = TopicName <$> (T.pack . getNonEmpty) <$> series
 instance Monad m => Serial m TopicFilter where
   series = TopicFilter <$> (T.pack . getNonEmpty) <$> series

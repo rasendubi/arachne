@@ -8,7 +8,7 @@ module Network.MQTT.Packet
   , Password(..)
 
   -- ** Messages
-  , Topic(..)
+  , TopicName(..)
   , TopicFilter(..)
   , QoS(..)
   , Message(..)
@@ -73,7 +73,7 @@ newtype Password = Password { unPassword :: ByteString }
 --
 -- MQTT topic is a list of topic levels separated by the topic level
 -- separator (\'/'). Topic name MUST NOT include wildcards.
-newtype Topic = Topic { unTopic :: Text }
+newtype TopicName = TopicName { unTopicName :: Text }
   deriving (Eq, Show)
 
 -- | MQTT Topic Filter.
@@ -129,7 +129,7 @@ instance Enum QoS where
 data Message
   = Message{
     -- | A topic the message is published to.
-      messageTopic   :: !Topic
+      messageTopic   :: !TopicName
 
     -- | Application-level payload
     , messageMessage :: !ByteString

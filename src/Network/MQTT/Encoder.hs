@@ -64,7 +64,7 @@ encodeConnectVariableHeader ConnectPacket{..} = mconcat
 
 encodePublishVariableHeader :: PublishPacket -> Builder
 encodePublishVariableHeader PublishPacket{..} =
-  encodeText (unTopic $ messageTopic publishMessage)
+  encodeText (unTopicName $ messageTopic publishMessage)
   <> maybe mempty encodePacketIdentifier publishPacketIdentifier
 
 encodeText :: Text -> Builder
@@ -113,10 +113,10 @@ encodeConnectPayload :: ConnectPacket -> Builder
 encodeConnectPayload ConnectPacket{..} =
   mconcat
     [ encodeText $ unClientIdentifier connectClientIdentifier
-    , maybe mempty (encodeText . unTopic . messageTopic) connectWillMsg
-    , maybe mempty (encodeBytes . messageMessage)        connectWillMsg
-    , maybe mempty (encodeText . unUserName)             connectUserName
-    , maybe mempty (encodeBytes . unPassword)            connectPassword
+    , maybe mempty (encodeText . unTopicName . messageTopic) connectWillMsg
+    , maybe mempty (encodeBytes . messageMessage)            connectWillMsg
+    , maybe mempty (encodeText . unUserName)                 connectUserName
+    , maybe mempty (encodeBytes . unPassword)                connectPassword
     ]
 
 encodeRemainingLength :: Int64 -> Builder

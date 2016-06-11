@@ -115,5 +115,5 @@ trie = foldl' (\xs (x,y) -> TT.insert (topicFilter x) y xs) TT.empty
 topicFilter :: String -> TopicFilter
 topicFilter = TopicFilter . T.pack
 
-topic :: String -> Topic
-topic = Topic . T.pack
+topic :: String -> TopicName
+topic = TopicName . T.pack
