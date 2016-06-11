@@ -20,7 +20,7 @@ library
                        Network.MQTT.SN.Parser
                        Network.MQTT.SN.Encoder
                        Data.TopicFilterTrie
-  build-depends:       base >=4.8.1 && <4.9
+  build-depends:       base >=4.8.1 && <4.10
                      , attoparsec >=0.12.1 && <0.14
                      , attoparsec-binary >=0.2 && <0.3
                      , bytestring >=0.10.6 && <0.11
@@ -40,7 +40,7 @@ test-suite spec
                        Network.MQTT.EncoderSpec
                        Network.MQTT.SN.ParserSpec
                        Network.MQTT.SN.EncoderSpec
-  build-depends:       base >=4.8.1 && <4.9
+  build-depends:       base >=4.8.1 && <4.10
                      , arachne
                      , attoparsec >=0.12.1 && <0.14
                      , bytestring >=0.10.6 && <0.11
