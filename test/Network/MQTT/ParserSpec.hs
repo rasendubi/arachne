@@ -81,7 +81,7 @@ spec = do
           CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier (T.pack "abc")
                                , connectProtocolLevel = 0x04
                                , connectWillMsg = Just $
-                                   Message (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
+                                   Message (TopicName $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
                                , connectUserName = Just (UserName $ T.pack "ac")
                                , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
                                , connectCleanSession = True
@@ -126,7 +126,7 @@ spec = do
           CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier (T.pack "abc")
                                , connectProtocolLevel = 0xf1
                                , connectWillMsg = Just $
-                                   Message (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
+                                   Message (TopicName $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
                                , connectUserName = Just (UserName $ T.pack "ac")
                                , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
                                , connectCleanSession = True
@@ -214,7 +214,7 @@ spec = do
           CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier (T.pack clientId)
                                , connectProtocolLevel = 0x04
                                , connectWillMsg = Just $
-                                   Message (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
+                                   Message (TopicName $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
                                , connectUserName = Just (UserName $ T.pack "ac")
                                , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
                                , connectCleanSession = True
@@ -252,7 +252,7 @@ spec = do
           CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier T.empty
                                , connectProtocolLevel = 0x04
                                , connectWillMsg = Just $
-                                   Message (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
+                                   Message (TopicName $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
                                , connectUserName = Just (UserName $ T.pack "ac")
                                , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
                                , connectCleanSession = True
@@ -291,7 +291,7 @@ spec = do
           CONNECT ConnectPacket{ connectClientIdentifier = ClientIdentifier T.empty
                                , connectProtocolLevel = 0x04
                                , connectWillMsg = Just $
-                                   Message (Topic $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
+                                   Message (TopicName $ T.pack "a/b") (BS.pack [0x12, 0xab]) QoS1 False
                                , connectUserName = Just (UserName $ T.pack "ac")
                                , connectPassword = Just (Password $ BS.pack [0xcd, 0xbb, 0x11])
                                , connectCleanSession = False
@@ -431,20 +431,20 @@ spec = do
       it "parses valid packet" $ do
         [0x3d, 0x09, 0x00, 0x03, 0x61, 0x2f, 0x62, 0x00, 0x0a, 0xab, 0x12] `shouldParseAs`
           PUBLISH PublishPacket{ publishDup = True
-                               , publishMessage = Message (Topic $ T.pack "a/b") (BS.pack [0xab, 0x12]) QoS2 True
+                               , publishMessage = Message (TopicName $ T.pack "a/b") (BS.pack [0xab, 0x12]) QoS2 True
                                , publishPacketIdentifier = Just (PacketIdentifier 10)
                                }
 
         [0x30, 0x07, 0x00, 0x03, 0x61, 0x2f, 0x62, 0xab, 0x12] `shouldParseAs`
           PUBLISH PublishPacket{ publishDup = False
-                               , publishMessage = Message (Topic $ T.pack "a/b") (BS.pack [0xab, 0x12]) QoS0 False
+                               , publishMessage = Message (TopicName $ T.pack "a/b") (BS.pack [0xab, 0x12]) QoS0 False
                                , publishPacketIdentifier = Nothing
                                }
 
       it "parses packet with no payload" $ do
         [0x30, 0x05, 0x00, 0x03, 0x61, 0x2f, 0x62] `shouldParseAs`
           PUBLISH PublishPacket{ publishDup = False
-                               , publishMessage = Message (Topic $ T.pack "a/b") BS.empty QoS0 False
+                               , publishMessage = Message (TopicName $ T.pack "a/b") BS.empty QoS0 False
                                , publishPacketIdentifier = Nothing
                                }
 
