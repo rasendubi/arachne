@@ -223,6 +223,21 @@ spec = do
             }
           expectConnectionClosed
 
+    it "should accept unsubscribe packet" $ do
+      withSingleClient $ do
+        clientConnect "client1"
+        writePacket $
+          UNSUBSCRIBE UnsubscribePacket
+          { unsubscribePacketIdentifier = PacketIdentifier 0xab
+          , unsubscribeTopicFilters = [ TopicFilter (T.pack "a") ]
+          }
+        expectPacket $
+          UNSUBACK UnsubackPacket
+          { unsubackPacketIdentifier = PacketIdentifier 0xab }
+
+withSingleClient :: CCMonad () -> IO ()
+withSingleClient x = withServer $ \testAddr -> withClient testAddr x
+
 clientConnect :: String -> CCMonad ()
 clientConnect clientId = do
   writePacket (CONNECT $ ConnectPacket

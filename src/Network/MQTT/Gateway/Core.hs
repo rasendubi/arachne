@@ -111,6 +111,10 @@ packetHandler state (Just p) = do
                       subscribePacketIdentifier
                       (fmap (Just . snd) subscribeTopicFiltersQoS))
 
+    MQTT.UNSUBSCRIBE MQTT.UnsubscribePacket{..} -> atomically $ do
+      sendPacket state $
+        MQTT.UNSUBACK (MQTT.UnsubackPacket unsubscribePacketIdentifier)
+
     _ -> return ()
 
 sendPacket :: GatewayClient -> MQTT.Packet -> STM ()
