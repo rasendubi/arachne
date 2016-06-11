@@ -92,27 +92,26 @@ authenticator gw state is = do
         case mx of
           Nothing -> return ()
           Just x -> writeTQueue (gcSendQueue x) Nothing
-      clientReceiver state is
 
-clientReceiver :: GatewayClient -> InputStream MQTT.Packet -> IO ()
-clientReceiver state is = S.makeOutputStream handler >>= S.connect is
-  where
-    handler Nothing  = return ()
-    handler (Just p) = do
-      debugM "MQTT.Gateway" $ "Received: " ++ show p
-      case p of
-        MQTT.CONNECT _ -> throwIO MQTTError
+      S.makeOutputStream (packetHandler state) >>= S.connect is
 
-        MQTT.PINGREQ _ -> atomically $ do
-          sendPacket state (MQTT.PINGRESP MQTT.PingrespPacket)
+packetHandler :: GatewayClient -> Maybe MQTT.Packet -> IO ()
+packetHandler _     Nothing  = return ()
+packetHandler state (Just p) = do
+  debugM "MQTT.Gateway" $ "Received: " ++ show p
+  case p of
+    MQTT.CONNECT _ -> throwIO MQTTError
 
-        MQTT.SUBSCRIBE subscribe -> atomically $ do
-          sendPacket state $
-            MQTT.SUBACK (MQTT.SubackPacket
-                          (MQTT.subscribePacketIdentifier subscribe)
-                          [ Just MQTT.QoS0 ])
+    MQTT.PINGREQ _ -> atomically $ do
+      sendPacket state (MQTT.PINGRESP MQTT.PingrespPacket)
 
-        _ -> return ()
+    MQTT.SUBSCRIBE subscribe -> atomically $ do
+      sendPacket state $
+        MQTT.SUBACK (MQTT.SubackPacket
+                      (MQTT.subscribePacketIdentifier subscribe)
+                      [ Just MQTT.QoS0 ])
+
+    _ -> return ()
 
 sendPacket :: GatewayClient -> MQTT.Packet -> STM ()
 sendPacket state p = do
