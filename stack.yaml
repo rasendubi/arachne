@@ -1,11 +1,22 @@
-resolver: lts-5.13
+resolver: lts-6.1
+
+nix:
+  enable: false
+  packages:
+    - zlib
+    - haskellPackages.hscolour
 
 packages:
 - '.'
 
+# See https://github.com/jdnavarro/smallcheck-series/pull/9
+- location:
+    git: https://github.com/rasendubi/smallcheck-series.git
+    commit: 7cda4b7f096c9508f7fe47dd5bac4fe9622e7488
+  extra-dep: true
+
 extra-deps:
 - attoparsec-binary-0.2
-- smallcheck-series-0.5.1
 
 flags: {}
 
