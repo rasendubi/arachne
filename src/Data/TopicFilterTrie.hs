@@ -27,7 +27,7 @@ import qualified Data.Text as Text
 import qualified Data.Trie.Class as TC
 import qualified Data.Trie.HashMap as T
 
-import           Network.MQTT.Packet (Topic(..), TopicFilter(..))
+import           Network.MQTT.Packet (TopicName(..), TopicFilter(..))
 
 -- | That's main type of the topic filter trie.
 --
@@ -62,10 +62,10 @@ lookupWithDefault x tf (TopicFilterTrie t) = TC.lookupWithDefault x (filterToPat
 
 -- | Matches a single topic against a trie of the filters. Returns a
 -- list of all matches.
-matches :: Topic -> TopicFilterTrie a -> [a]
+matches :: TopicName -> TopicFilterTrie a -> [a]
 matches t (TopicFilterTrie hmt) = matches' path hmt
   where
-    path = Text.splitOn (Text.singleton '/') (unTopic t)
+    path = Text.splitOn (Text.singleton '/') (unTopicName t)
 
     matches' :: [Text] -> T.HashMapTrie Text a -> [a]
     matches' []     _ = [] -- this case is never called

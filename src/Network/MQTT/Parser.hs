@@ -372,7 +372,7 @@ parseByteString = do
 --
 -- MQTT-4.7.3-3: Topic Names and Topic Filters are UTF-8 encoded
 -- strings, they MUST NOT encode to more than 65535 bytes.
-toTopicName :: ByteString -> Parser Topic
+toTopicName :: ByteString -> Parser TopicName
 toTopicName bs = do
   assert (BS.length bs >= 1)
     "MQTT-4.7.3-1: All Topic Names MUST be at least one character long"
@@ -382,7 +382,7 @@ toTopicName bs = do
     "MQTT-4.7.3-3: Topic Names are UTF-8 encoded strings"
   assert (isNothing $ T.find (\c -> c == '#' || c == '+' || c == '\0') t)
     "Topic name can't include wildcard or null character"
-  return $ Topic t
+  return $ TopicName t
 
 -- | Converts a ByteString to the topic filter. Fails if ByteString is
 -- not a valid Topic Filter.
