@@ -45,7 +45,7 @@ library
 executable mqtt-gateway
   main-is:             Main.hs
   hs-source-dirs:      mqtt-gateway
-  build-depends:       base >=4.8.1 && <4.9
+  build-depends:       base >=4.8.1 && <4.10
                      , hslogger >=1.2.9 && <1.3
                      , arachne
                      , network >=2.6.2 && <2.7
