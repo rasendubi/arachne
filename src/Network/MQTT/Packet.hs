@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Network.MQTT.Packet
   (
   -- * User facing types
@@ -36,9 +37,10 @@ module Network.MQTT.Packet
   , DisconnectPacket(..)
   ) where
 
-import Data.Word (Word16, Word8)
-import Data.Text (Text)
 import Data.ByteString (ByteString)
+import Data.Hashable (Hashable)
+import Data.Text (Text)
+import Data.Word (Word16, Word8)
 import GHC.Generics (Generic)
 
 -- | A client identifier.
@@ -52,7 +54,7 @@ import GHC.Generics (Generic)
 -- server won't store any state among the connections. (Note that
 -- server may not support empty client identifiers.)
 newtype ClientIdentifier = ClientIdentifier { unClientIdentifier :: Text }
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Show, Generic, Hashable)
 
 -- | User name.
 --
@@ -223,20 +225,20 @@ data PubcompPacket
 
 data SubscribePacket
   = SubscribePacket
-    { subscribePacketIdentifier :: !PacketIdentifier,
-      subscribeTopicFiltersQoS  :: [(TopicFilter, QoS)]
+    { subscribePacketIdentifier :: !PacketIdentifier
+    , subscribeTopicFiltersQoS  :: [(TopicFilter, QoS)]
     } deriving (Eq, Show)
 
 data SubackPacket
   = SubackPacket
-    { subackPacketIdentifier :: !PacketIdentifier,
-      subackResponses        :: [Maybe QoS]
+    { subackPacketIdentifier :: !PacketIdentifier
+    , subackResponses        :: [Maybe QoS]
     } deriving (Eq, Show)
 
 data UnsubscribePacket
   = UnsubscribePacket
-    { unsubscribePacketIdentifier :: !PacketIdentifier,
-      unsubscribeTopicFilters     :: [TopicFilter]
+    { unsubscribePacketIdentifier :: !PacketIdentifier
+    , unsubscribeTopicFilters     :: [TopicFilter]
     } deriving (Eq, Show)
 
 data UnsubackPacket
