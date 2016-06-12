@@ -16,15 +16,18 @@ library
   exposed-modules:     Network.MQTT.Packet
                        Network.MQTT.Parser
                        Network.MQTT.Encoder
-                       Network.MQTT.SN.Packet
-                       Network.MQTT.SN.Parser
-                       Network.MQTT.SN.Encoder
-                       Data.TopicFilterTrie
+                       Network.MQTT.Gateway
+                       Network.MQTT.Gateway.Core
+                       Network.MQTT.Gateway.Socket
                        Network.MQTT.Client
                        Network.MQTT.Client.Core
                        Network.MQTT.Client.Socket
+                       Network.MQTT.SN.Packet
+                       Network.MQTT.SN.Parser
+                       Network.MQTT.SN.Encoder
                        Network.MQTT.Utils
-  build-depends:       base >=4.8.1 && <4.9
+                       Data.TopicFilterTrie
+  build-depends:       base >=4.8.1 && <4.10
                      , attoparsec >=0.12.1 && <0.14
                      , attoparsec-binary >=0.2 && <0.3
                      , bytestring >=0.10.6 && <0.11
@@ -32,6 +35,9 @@ library
                      , hslogger >=1.2.9 && <1.3
                      , io-streams >=1.3.5 && <1.4
                      , mtl >=2.2.1 && <2.3
+                     , network >=2.6.2 && <2.7
+                     , stm >=2.4.4 && <2.5
+                     , stm-containers >=0.2.10 && <0.3
                      , semigroups >=0.18.1 && <0.19
                      , text >=1.2.1 && <1.3
                      , tries >=0.0.4 && <0.1
@@ -46,16 +52,27 @@ library
   hs-source-dirs:      src
   default-language:    Haskell2010
 
+executable mqtt-gateway
+  main-is:             Main.hs
+  hs-source-dirs:      mqtt-gateway
+  build-depends:       base >=4.8.1 && <4.10
+                     , hslogger >=1.2.9 && <1.3
+                     , arachne
+                     , network >=2.6.2 && <2.7
+  default-language:    Haskell2010
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+
 test-suite spec
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Network.MQTT.ParserSpec
                        Network.MQTT.EncoderSpec
+                       Network.MQTT.GatewaySpec
+                       Network.MQTT.ClientSpec
                        Network.MQTT.SN.ParserSpec
                        Network.MQTT.SN.EncoderSpec
-                       Network.MQTT.ClientSpec
-  build-depends:       base >=4.8.1 && <4.9
+  build-depends:       base >=4.8.1 && <4.10
                      , arachne
                      , attoparsec >=0.12.1 && <0.14
                      , bytestring >=0.10.6 && <0.11
