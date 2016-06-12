@@ -42,6 +42,7 @@ import Data.Hashable (Hashable)
 import Data.Text (Text)
 import Data.Word (Word16, Word8)
 import GHC.Generics (Generic)
+import Data.Hashable (Hashable)
 
 -- | A client identifier.
 --
@@ -151,7 +152,7 @@ data Message
     } deriving (Eq, Show, Generic)
 
 newtype PacketIdentifier = PacketIdentifier { unPacketIdentifier :: Word16 }
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Show, Generic, Ord, Hashable)
 
 data Packet
   = CONNECT     !ConnectPacket
