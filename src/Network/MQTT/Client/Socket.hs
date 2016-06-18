@@ -15,22 +15,19 @@ import           Network.Socket           ( AddrInfo, Socket
                                           , addrFamily, close, connect
                                           , defaultProtocol, setSocketOption
                                           , socket )
-import           Control.Exception        ( bracket )
 
+-- TODO(rasen): socket leak
 runClientWithSockets :: ConnectPacket -> AddrInfo -> IO (Socket, Client)
-runClientWithSockets cp addrInfo = do
-  sock <- connectClient addrInfo
+runClientWithSockets cp serveraddr = do
+  sock <- socket (addrFamily serveraddr) Stream defaultProtocol
+  setSocketOption sock KeepAlive 1
+  connect sock (addrAddress serveraddr)
+
+  debugM "MQTT.Client" $ "Socket opened: " ++ show serveraddr
+
   (is, os) <- socketToMqttStreams sock
   client <- runClient cp is os
   return (sock, client)
-
-connectClient :: AddrInfo -> IO Socket
-connectClient serveraddr =
-  bracket (socket (addrFamily serveraddr) Stream defaultProtocol) close $ \sock -> do
-    setSocketOption sock KeepAlive 1
-    connect sock (addrAddress serveraddr)
-    debugM "MQTT.Client" $ "Connected: " ++ show serveraddr
-    return sock
 
 closeConnection :: Socket -> Client -> IO ()
 closeConnection sock client = do
