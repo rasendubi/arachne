@@ -9,6 +9,7 @@ import qualified Data.Text as T
 import           Network.MQTT.Client ( runClient
                                      , sendPublish
                                      , sendSubscribe
+                                     , sendUnsubscribe
                                      , setPublishCallback
                                      , Client)
 import           Network.MQTT.Packet
@@ -483,7 +484,19 @@ spec = do
       pending
 
     it "Each time a Client sends a new packet of one of these types (SUBSCRIBE, UNSUBSCRIBE, and PUBLISH (in cases where QoS > 0)) it MUST assign it a currently unused Packet Identifier [MQTT-2.3.1-2]" $ do
-      pending
+      (client, (is, _)) <- new
+      sendPublish client  Message { messageTopic   = TopicName $ T.pack "a/b"
+                                  , messageQoS     = QoS1
+                                  , messageMessage = BS.pack [0xab, 0x12]
+                                  , messageRetain  = False
+                                  }
+      PUBLISH pp1 <- readPacket is
+      sendSubscribe client [ (TopicFilter $ T.pack "c/d", QoS2) ]
+      SUBSCRIBE pp2 <- readPacket is
+      sendUnsubscribe client [ TopicFilter $ T.pack "c/d" ]
+      UNSUBSCRIBE pp3 <- readPacket is
+
+      Set.size (Set.fromList [ fromJust $ publishPacketIdentifier pp1, subscribePacketIdentifier pp2, unsubscribePacketIdentifier pp3 ]) `shouldBe` 3
 
     it "If a Client re-sends a particular Control Packet, then it MUST use the same Packet Identifier in subsequent re-sends of that packet. The Packet Identifier becomes available for reuse after the Client has processed the corresponding acknowledgement packet. In the case of a QoS 1 PUBLISH this is the corresponding PUBACK; in the case of QoS 2 it is PUBCOMP. For SUBSCRIBE or UNSUBSCRIBE it is the corresponding SUBACK or UNSUBACK [MQTT-2.3.1-3]" $ do
       pending

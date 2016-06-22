@@ -5,9 +5,11 @@ module Network.MQTT.Client.Core
 
  , sendPublish
  , sendSubscribe
+ , sendUnsubscribe
 
  , setPublishCallback
  , setSubackCallback
+ , setUnsubackCallback
 
  , Client)
 where
@@ -49,6 +51,7 @@ data ClientState =
   , csUnAckReceivedPublishIds     :: TSet.Set PacketIdentifier
   , csPublishCallback             :: TVar (Maybe (TopicName -> ByteString -> IO ()))
   , csSubackCallback              :: TVar (Maybe ([Maybe QoS] -> IO ()))
+  , csUnsubackCallback            :: TVar (Maybe (IO ()))
   }
 
 data SynchronizedThread =
@@ -73,6 +76,7 @@ newClientState =
               <*> newTVar Seq.empty
               <*> newTVar Seq.empty
               <*> TSet.new
+              <*> newTVar Nothing
               <*> newTVar Nothing
               <*> newTVar Nothing
 
@@ -106,6 +110,17 @@ runPublishCallback state publishPacket = do
     fromJust userCallback
       (messageTopic $ publishMessage publishPacket)
       (messageMessage $ publishMessage publishPacket)
+
+runSubackCallback :: ClientState -> SubackPacket -> IO ()
+runSubackCallback state subackPacket = do
+  userCallback <- atomically $ readTVar (csSubackCallback state)
+  when (isJust userCallback) $
+    fromJust userCallback $ subackResponses subackPacket
+
+runUnsubackCallback :: ClientState -> IO()
+runUnsubackCallback state = do
+  userCallback <- atomically $ readTVar (csUnsubackCallback state)
+  when (isJust userCallback) $ fromJust userCallback
 
 authenticator :: ClientState -> InputStream Packet -> IO ()
 authenticator state is = do
@@ -176,6 +191,26 @@ receiver state is = S.makeOutputStream handler >>= S.connect is
           TSet.delete packetIdentifier $ csUnAckReceivedPublishIds state
           sendPacket state $ PUBCOMP (PubcompPacket packetIdentifier)
 
+        SUBACK subackPacket -> do
+          atomically $ do
+            let packetIdentifier = subackPacketIdentifier subackPacket
+            unAckSentSubscribePackets <- readTVar $ csUnAckSentSubscribePackets state
+            let subscribePacket = Seq.index unAckSentSubscribePackets 0
+            when (subscribePacketIdentifier subscribePacket /= packetIdentifier) $ throwSTM MQTTError
+            writeTVar (csUnAckSentSubscribePackets state) $ Seq.drop 1 unAckSentSubscribePackets
+            TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
+          runSubackCallback state subackPacket
+
+        UNSUBACK unsubackPacket -> do
+          atomically $ do
+            let packetIdentifier = unsubackPacketIdentifier unsubackPacket
+            unAckSentUnsubscribePackets <- readTVar $ csUnAckSentUnsubscribePackets state
+            let unsubscribePacket = Seq.index unAckSentUnsubscribePackets 0
+            when (unsubscribePacketIdentifier unsubscribePacket /= packetIdentifier) $ throwSTM MQTTError
+            writeTVar (csUnAckSentUnsubscribePackets state) $ Seq.drop 1 unAckSentUnsubscribePackets
+            TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
+          runUnsubackCallback state
+
         _ -> return ()
 
 
@@ -210,7 +245,14 @@ sendPublish client publishMessage = atomically $ do
 sendSubscribe :: Client -> [(TopicFilter, QoS)] -> IO ()
 sendSubscribe client subscribeTopicFiltersQoS = atomically $ do
   subscribePacketIdentifier <- genPacketIdentifier (state client)
+  modifyTVar (csUnAckSentSubscribePackets $ state client) $ \p -> p Seq.|> SubscribePacket{..}
   writeTQueue (csSendQueue $ state client) (Just $ SUBSCRIBE SubscribePacket{..})
+
+sendUnsubscribe :: Client -> [TopicFilter] -> IO ()
+sendUnsubscribe client unsubscribeTopicFilters = atomically $ do
+  unsubscribePacketIdentifier <- genPacketIdentifier (state client)
+  modifyTVar (csUnAckSentUnsubscribePackets $ state client) $ \p -> p Seq.|> UnsubscribePacket{..}
+  writeTQueue (csSendQueue $ state client) (Just $ UNSUBSCRIBE UnsubscribePacket{..})
 
 sender :: TQueue (Maybe Packet) -> OutputStream Packet -> IO ()
 sender queue os = do
@@ -225,3 +267,6 @@ setPublishCallback client = atomically . writeTVar (csPublishCallback $ state cl
 
 setSubackCallback :: Client -> Maybe ([Maybe QoS] -> IO ()) -> IO ()
 setSubackCallback client = atomically . writeTVar (csSubackCallback $ state client)
+
+setUnsubackCallback :: Client -> Maybe (IO ()) -> IO ()
+setUnsubackCallback client = atomically . writeTVar (csUnsubackCallback $ state client)
