@@ -17,8 +17,8 @@ import           Network.Socket           ( AddrInfo, Socket
                                           , socket )
 
 -- TODO(rasen): socket leak
-runClientWithSockets :: ConnectPacket -> AddrInfo -> IO (Socket, Client)
-runClientWithSockets cp serveraddr = do
+runClientWithSockets :: ClientConfig -> AddrInfo -> IO (Socket, Client)
+runClientWithSockets config serveraddr = do
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
   setSocketOption sock KeepAlive 1
   connect sock (addrAddress serveraddr)
@@ -26,7 +26,7 @@ runClientWithSockets cp serveraddr = do
   debugM "MQTT.Client" $ "Socket opened: " ++ show serveraddr
 
   (is, os) <- socketToMqttStreams sock
-  client <- runClient cp is os
+  client <- runClient config is os
   return (sock, client)
 
 closeConnection :: Socket -> Client -> IO ()

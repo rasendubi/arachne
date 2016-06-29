@@ -7,10 +7,8 @@ module Network.MQTT.Client.Core
  , sendSubscribe
  , sendUnsubscribe
 
- , setPublishCallback
- , setSubackCallback
- , setUnsubackCallback
-
+ , UserCredentials(..)
+ , ClientConfig(..)
  , Client)
 where
 
@@ -20,8 +18,7 @@ import           Control.Concurrent.STM ( STM, TQueue, TVar, newTVar, newTQueue,
 import           Control.Exception ( Exception, throwIO )
 import           Control.Monad ( unless, when )
 import           Control.Monad.Loops ( dropWhileM )
-import           Data.ByteString ( ByteString )
-import           Data.Maybe ( isJust, fromJust )
+import           Data.Maybe ( fromJust )
 import qualified Data.Sequence as Seq
 import           Data.Word ( Word16 )
 import           Network.MQTT.Packet
@@ -30,8 +27,24 @@ import qualified STMContainers.Set as TSet
 import           System.IO.Streams ( InputStream, OutputStream )
 import qualified System.IO.Streams as S
 import           System.Log.Logger ( debugM )
-import           System.Random ( randomRs, mkStdGen )
+import           System.Random ( randomRs, newStdGen, StdGen )
 
+
+data UserCredentials = UserCredentials
+                       { userName :: UserName
+                       , password :: Maybe Password
+                       }
+
+data ClientConfig = ClientConfig
+                    { ccClientIdenfier   :: !ClientIdentifier
+                    , ccWillMsg          :: !(Maybe Message)
+                    , ccUserCredentials  :: !(Maybe UserCredentials)
+                    , ccCleanSession     :: !Bool
+                    , ccKeepAlive        :: !Word16
+                    , ccPublishCallback  :: Message -> IO ()
+                    , ccSubackCallback   :: [(TopicFilter, Maybe QoS)] -> IO ()
+                    , ccUnsubackCallback :: [TopicFilter] -> IO ()
+                    }
 
 data Client =
   Client
@@ -49,9 +62,7 @@ data ClientState =
   , csUnAckSentSubscribePackets   :: TVar (Seq.Seq SubscribePacket)
   , csUnAckSentUnsubscribePackets :: TVar (Seq.Seq UnsubscribePacket)
   , csUnAckReceivedPublishIds     :: TSet.Set PacketIdentifier
-  , csPublishCallback             :: TVar (Maybe (TopicName -> ByteString -> IO ()))
-  , csSubackCallback              :: TVar (Maybe ([Maybe QoS] -> IO ()))
-  , csUnsubackCallback            :: TVar (Maybe (IO ()))
+  , csConfig                      :: ClientConfig
   }
 
 data SynchronizedThread =
@@ -66,19 +77,17 @@ data MQTTError = MQTTError
 instance Exception MQTTError
 
 
-newClientState :: STM ClientState
-newClientState =
+newClientState :: ClientConfig -> StdGen -> STM ClientState
+newClientState config gen =
   ClientState <$> newTQueue
               <*> TSet.new
-              <*> newTVar (randomRs (0, 65535) (mkStdGen 42))
+              <*> newTVar (randomRs (0, 65535) gen)
               <*> newTVar Seq.empty
               <*> newTVar Seq.empty
               <*> newTVar Seq.empty
               <*> newTVar Seq.empty
               <*> TSet.new
-              <*> newTVar Nothing
-              <*> newTVar Nothing
-              <*> newTVar Nothing
+              <*> pure config
 
 forkThread :: IO () -> IO SynchronizedThread
 forkThread proc = do
@@ -86,41 +95,33 @@ forkThread proc = do
   threadId <- forkFinally proc (\_ -> putMVar handle ())
   return SynchronizedThread{..}
 
-runClient :: ConnectPacket -> InputStream Packet -> OutputStream Packet -> IO Client
-runClient p is os = do
-  state <- atomically newClientState
+runClient :: ClientConfig -> InputStream Packet -> OutputStream Packet -> IO Client
+runClient config@ClientConfig{..} is os = do
+  gen <- newStdGen
+  state <- atomically $ newClientState config gen
 
   senderThread   <- forkThread $ sender (csSendQueue state) os
   receiverThread <- forkThread $ authenticator state is
   let threads = (senderThread, receiverThread)
 
-  sendConnect state p
+  sendConnect state
+    ConnectPacket
+    { connectClientIdentifier = ccClientIdenfier
+    , connectProtocolLevel    = 0x04
+    , connectWillMsg          = ccWillMsg
+    , connectUserName         = fmap userName ccUserCredentials
+    , connectPassword         = maybe Nothing password ccUserCredentials
+    , connectCleanSession     = ccCleanSession
+    , connectKeepAlive        = ccKeepAlive
+    }
 
   return Client{..}
 
+stopClient :: Client -> IO ()
 stopClient = undefined
 
 sendPacket :: ClientState -> Packet -> STM ()
 sendPacket state p = writeTQueue (csSendQueue state) $ Just p
-
-runPublishCallback :: ClientState -> PublishPacket -> IO ()
-runPublishCallback state publishPacket = do
-  userCallback <- atomically $ readTVar (csPublishCallback state)
-  when (isJust userCallback) $
-    fromJust userCallback
-      (messageTopic $ publishMessage publishPacket)
-      (messageMessage $ publishMessage publishPacket)
-
-runSubackCallback :: ClientState -> SubackPacket -> IO ()
-runSubackCallback state subackPacket = do
-  userCallback <- atomically $ readTVar (csSubackCallback state)
-  when (isJust userCallback) $
-    fromJust userCallback $ subackResponses subackPacket
-
-runUnsubackCallback :: ClientState -> IO()
-runUnsubackCallback state = do
-  userCallback <- atomically $ readTVar (csUnsubackCallback state)
-  when (isJust userCallback) $ fromJust userCallback
 
 authenticator :: ClientState -> InputStream Packet -> IO ()
 authenticator state is = do
@@ -131,7 +132,9 @@ authenticator state is = do
 receiver :: ClientState -> InputStream Packet -> IO ()
 receiver state is = S.makeOutputStream handler >>= S.connect is
   where
-    handler Nothing = return ()
+    handler Nothing = do
+      debugM "MQTT.Client.Core" "Re-connecting: "
+      undefined
     handler (Just p) = do
       debugM "MQTT.Client.Core" $ "Received: " ++ show p
       case p of
@@ -192,27 +195,42 @@ receiver state is = S.makeOutputStream handler >>= S.connect is
           sendPacket state $ PUBCOMP (PubcompPacket packetIdentifier)
 
         SUBACK subackPacket -> do
-          atomically $ do
+          subscribePacket <- atomically $ do
             let packetIdentifier = subackPacketIdentifier subackPacket
             unAckSentSubscribePackets <- readTVar $ csUnAckSentSubscribePackets state
             let subscribePacket = Seq.index unAckSentSubscribePackets 0
             when (subscribePacketIdentifier subscribePacket /= packetIdentifier) $ throwSTM MQTTError
             writeTVar (csUnAckSentSubscribePackets state) $ Seq.drop 1 unAckSentSubscribePackets
             TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
-          runSubackCallback state subackPacket
+            return subscribePacket
+          runSubackCallback state subackPacket subscribePacket
 
         UNSUBACK unsubackPacket -> do
-          atomically $ do
+          unsubscribePacket <- atomically $ do
             let packetIdentifier = unsubackPacketIdentifier unsubackPacket
             unAckSentUnsubscribePackets <- readTVar $ csUnAckSentUnsubscribePackets state
             let unsubscribePacket = Seq.index unAckSentUnsubscribePackets 0
             when (unsubscribePacketIdentifier unsubscribePacket /= packetIdentifier) $ throwSTM MQTTError
             writeTVar (csUnAckSentUnsubscribePackets state) $ Seq.drop 1 unAckSentUnsubscribePackets
             TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
-          runUnsubackCallback state
+            return unsubscribePacket
+          runUnsubackCallback state unsubscribePacket
 
         _ -> return ()
 
+
+runSubackCallback :: ClientState -> SubackPacket -> SubscribePacket -> IO ()
+runSubackCallback ClientState{..} subackPacket subscribePacket = do
+  let topicFilters = fst <$> subscribeTopicFiltersQoS subscribePacket
+  ccSubackCallback csConfig $ zip topicFilters (subackResponses subackPacket)
+
+runPublishCallback :: ClientState -> PublishPacket -> IO ()
+runPublishCallback ClientState{..} publishPacket =
+ ccPublishCallback csConfig $ publishMessage publishPacket
+
+runUnsubackCallback :: ClientState -> UnsubscribePacket -> IO ()
+runUnsubackCallback ClientState{..} unsubscribePacket =
+  ccUnsubackCallback csConfig $ unsubscribeTopicFilters unsubscribePacket
 
 sendConnect :: ClientState -> ConnectPacket -> IO ()
 sendConnect state packet = atomically $ sendPacket state $ CONNECT packet
@@ -260,13 +278,3 @@ sender queue os = do
   debugM "MQTT.Client.Core" "sender exit"
   where
     logPacket p = debugM "MQTT.Client.Core" $ "Sending: " ++ show p
-
-
-setPublishCallback :: Client -> Maybe (TopicName -> ByteString -> IO ()) -> IO ()
-setPublishCallback client = atomically . writeTVar (csPublishCallback $ state client)
-
-setSubackCallback :: Client -> Maybe ([Maybe QoS] -> IO ()) -> IO ()
-setSubackCallback client = atomically . writeTVar (csSubackCallback $ state client)
-
-setUnsubackCallback :: Client -> Maybe (IO ()) -> IO ()
-setUnsubackCallback client = atomically . writeTVar (csUnsubackCallback $ state client)
