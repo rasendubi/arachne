@@ -8,6 +8,7 @@ import           Network.MQTT.Client.Core
 import           Network.MQTT.Utils
 import           System.Log.Logger        ( debugM )
 
+import           System.IO.Streams ( OutputStream )
 import           Network.MQTT.Packet
 import           Network.Socket           ( AddrInfo, Socket
                                           , SocketOption(KeepAlive)
@@ -17,8 +18,8 @@ import           Network.Socket           ( AddrInfo, Socket
                                           , socket )
 
 -- TODO(rasen): socket leak
-runClientWithSockets :: ClientConfig -> AddrInfo -> IO (Socket, Client)
-runClientWithSockets config serveraddr = do
+runClientWithSockets :: ClientConfig -> OutputStream ClientResult -> AddrInfo -> IO (Socket, Client)
+runClientWithSockets config cOs serveraddr = do
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
   setSocketOption sock KeepAlive 1
   connect sock (addrAddress serveraddr)
@@ -26,7 +27,7 @@ runClientWithSockets config serveraddr = do
   debugM "MQTT.Client" $ "Socket opened: " ++ show serveraddr
 
   (is, os) <- socketToMqttStreams sock
-  client <- runClient config is os
+  client <- runClient config cOs is os
   return (sock, client)
 
 closeConnection :: Socket -> Client -> IO ()

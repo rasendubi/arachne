@@ -15,6 +15,7 @@ import           Network.MQTT.Client ( runClient
 
                                      , UserCredentials(..)
                                      , ClientConfig(..)
+                                     , ClientResult(..)
                                      , Client)
 import           Network.MQTT.Packet
 import           System.IO.Streams ( InputStream, OutputStream )
@@ -27,6 +28,7 @@ import           System.Log.Logger            ( rootLoggerName
 import           Control.Monad ( forM_ )
 import qualified Data.Set as Set
 import           Test.Hspec
+import           System.Timeout (timeout)
 
 debugTests :: IO ()
 debugTests = updateGlobalLogger rootLoggerName (setLevel DEBUG)
@@ -35,23 +37,27 @@ data Session = Session
                { client :: Client
                , is     :: InputStream Packet
                , os     :: OutputStream Packet
+               , cIs    :: InputStream ClientResult
                }
 
 newSession :: ClientConfig -> IO Session
 newSession config = do
-  (is, is') <- S.makeChanPipe
-  (os', os) <- S.makeChanPipe
-  client <- runClient config is os
-  CONNECT _ <- readPacket os'
+  (is, is')  <- S.makeChanPipe
+  (os', os)  <- S.makeChanPipe
+  (cIs, cOs) <- S.makeChanPipe
+
+  client <- runClient config cOs is os
+  CONNECT _ <- readFromStream os'
   flip S.write is' $ Just (CONNACK (ConnackPacket False Accepted))
   return Session
     { client = client
     , is     = os'
     , os     = is'
+    , cIs    = cIs
     }
 
-readPacket :: InputStream Packet -> IO Packet
-readPacket is = fromJust <$> S.read is
+readFromStream :: InputStream a -> IO a
+readFromStream is = fromJust <$> S.read is
 
 writePacket :: OutputStream Packet -> Packet -> IO ()
 writePacket os p = S.write (Just p) os
@@ -65,9 +71,6 @@ defaultConfig = ClientConfig
                 , ccUserCredentials  = Nothing
                 , ccCleanSession     = True
                 , ccKeepAlive        = 0
-                , ccPublishCallback  = const $ return ()
-                , ccSubackCallback   = const $ return ()
-                , ccUnsubackCallback = const $ return ()
                 }
 
 defaultMessage = Message
@@ -92,7 +95,7 @@ spec = do
     it "In the QoS 0 delivery protocol, the Sender MUST send a PUBLISH packet with QoS=0, DUP=0 [MQTT-4.3.1-1]" $ do
       Session{..} <- newSession defaultConfig
       sendPublish client $ defaultMessage { messageQoS = QoS0 }
-      PUBLISH PublishPacket{..} <- readPacket is
+      PUBLISH PublishPacket{..} <- readFromStream is
       messageQoS publishMessage `shouldBe` QoS0
       publishDup                `shouldBe` False
 
@@ -101,11 +104,11 @@ spec = do
       Session{..} <- newSession defaultConfig
 
       sendPublish client $ defaultMessage { messageQoS = QoS1 }
-      PUBLISH p1 <- readPacket is
+      PUBLISH p1 <- readFromStream is
       sendPublish client $ defaultMessage { messageQoS = QoS1 }
-      PUBLISH p2 <- readPacket is
+      PUBLISH p2 <- readFromStream is
       sendPublish client $ defaultMessage { messageQoS = QoS1 }
-      PUBLISH p3 <- readPacket is
+      PUBLISH p3 <- readFromStream is
 
       Set.size (Set.fromList [ publishPacketIdentifier p1
                              , publishPacketIdentifier p2
@@ -116,7 +119,7 @@ spec = do
     it "In the QoS 1 delivery protocol, the Sender MUST send a PUBLISH Packet containing this Packet Identifier with QoS=1, DUP=0 [MQTT-4.3.2-1]" $ do
       Session{..} <- newSession defaultConfig
       sendPublish client $ defaultMessage { messageQoS = QoS1 }
-      PUBLISH PublishPacket{..} <- readPacket is
+      PUBLISH PublishPacket{..} <- readFromStream is
       messageQoS publishMessage `shouldBe` QoS1
       publishDup                `shouldBe` False
 
@@ -126,32 +129,28 @@ spec = do
 
 
     it "In the QoS 1 delivery protocol, the Receiver MUST respond with a PUBACK Packet containing the Packet Identifier from the incoming PUBLISH Packet, having accepted ownership of the Application Message [MQTT-4.3.2-2]" $ do
-      callbackMessage   <- newEmptyMVar
-
-      Session{..} <- newSession $ defaultConfig { ccPublishCallback = putMVar callbackMessage }
+      Session{..} <- newSession defaultConfig
 
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS1 } }
 
-      PUBACK PubackPacket{..} <- readPacket is
-      callbackMessage' <- takeMVar callbackMessage
+      PUBACK PubackPacket{..} <- readFromStream is
+      PublishResult message   <- readFromStream cIs
 
-      callbackMessage'       `shouldBe` defaultMessage { messageQoS = QoS1 }
+      message                `shouldBe` defaultMessage { messageQoS = QoS1 }
       pubackPacketIdentifier `shouldBe` defaultPacketIdentifier
 
 
     it "In the QoS 1 delivery protocol, the Receiver After it has sent a PUBACK Packet the Receiver MUST treat any incoming PUBLISH packet that contains the same Packet Identifier as being a newSession publication, irrespective of the setting of its DUP flag [MQTT-4.3.2-2]" $ do
-      callbackMessage   <- newEmptyMVar
-
-      Session{..} <- newSession $ defaultConfig { ccPublishCallback = putMVar callbackMessage }
+      Session{..} <- newSession defaultConfig
 
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS1 } }
 
-      PUBACK p1        <- readPacket is
-      callbackMessage' <- takeMVar callbackMessage
+      PUBACK p1              <- readFromStream is
+      PublishResult message' <- readFromStream cIs
 
-      callbackMessage'          `shouldBe` defaultMessage { messageQoS = QoS1 }
+      message'                  `shouldBe` defaultMessage { messageQoS = QoS1 }
       pubackPacketIdentifier p1 `shouldBe` defaultPacketIdentifier
 
       writePacket os $ PUBLISH
@@ -159,10 +158,10 @@ spec = do
                        , publishMessage = defaultMessage { messageQoS = QoS1 }
                        }
 
-      PUBACK p2         <- readPacket is
-      callbackMessage'' <- takeMVar callbackMessage
+      PUBACK p2               <- readFromStream is
+      PublishResult message'' <- readFromStream cIs
 
-      callbackMessage''         `shouldBe` defaultMessage { messageQoS = QoS1 }
+      message''                 `shouldBe` defaultMessage { messageQoS = QoS1 }
       pubackPacketIdentifier p2 `shouldBe` defaultPacketIdentifier
 
 
@@ -170,11 +169,11 @@ spec = do
       Session{..} <- newSession defaultConfig
 
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH p1 <- readPacket is
+      PUBLISH p1 <- readFromStream is
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH p2 <- readPacket is
+      PUBLISH p2 <- readFromStream is
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH p3 <- readPacket is
+      PUBLISH p3 <- readFromStream is
 
       Set.size (Set.fromList [ publishPacketIdentifier p1
                              , publishPacketIdentifier p2
@@ -185,7 +184,7 @@ spec = do
     it "In the QoS 2 delivery protocol, the Sender MUST send a PUBLISH packet containing this Packet Identifier with QoS=2, DUP=0 [MQTT-4.3.3-1]" $ do
       Session{..} <- newSession defaultConfig
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH PublishPacket{..} <- readPacket is
+      PUBLISH PublishPacket{..} <- readFromStream is
       messageQoS publishMessage `shouldBe` QoS2
       publishDup                `shouldBe` False
 
@@ -198,10 +197,10 @@ spec = do
       Session{..} <- newSession defaultConfig
 
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH PublishPacket{..} <- readPacket is
+      PUBLISH PublishPacket{..} <- readFromStream is
       let packetIdentifier = fromJust publishPacketIdentifier
       writePacket os $ PUBREC (PubrecPacket packetIdentifier)
-      PUBREL PubrelPacket{..} <- readPacket is
+      PUBREL PubrelPacket{..} <- readFromStream is
 
       pubrelPacketIdentifier `shouldBe` packetIdentifier
 
@@ -215,18 +214,17 @@ spec = do
 
 
     it "In the QoS2 delivery protocol, the Receiver MUST respond with a PUBREC containing the Packet Identifier from the incoming PUBLISH Packet, having accepted ownership of the Application Message [MQTT-4.3.3-1]" $ do
-      callbackMessage   <- newEmptyMVar
-
-      Session{..} <- newSession $ defaultConfig { ccPublishCallback = putMVar callbackMessage }
+      Session{..} <- newSession defaultConfig
 
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
-      PUBREC PubrecPacket{..} <- readPacket is
-      callbackMessage' <- takeMVar callbackMessage
+      PUBREC PubrecPacket{..} <- readFromStream is
+      PublishResult message   <- readFromStream cIs
 
-      callbackMessage'       `shouldBe` defaultMessage { messageQoS = QoS2 }
+      message                `shouldBe` defaultMessage { messageQoS = QoS2 }
       pubrecPacketIdentifier `shouldBe` defaultPacketIdentifier
+
 
     it "In the QoS2 delivery protocol, the Receiver Until it has received the corresponding PUBREL packet, the Receiver MUST acknowledge any subsequent PUBLISH packet with the same Packet Identifier by sending a PUBREC [MQTT-4.3.3-1]" $ do
       Session{..} <- newSession defaultConfig
@@ -234,15 +232,16 @@ spec = do
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
-      PUBREC p1 <- readPacket is
+      PUBREC p1 <- readFromStream is
       writePacket os $ PUBLISH
         defaultPublish { publishDup = True
                        , publishMessage = defaultMessage { messageQoS = QoS2 }
                        }
-      PUBREC p2 <- readPacket is
+      PUBREC p2 <- readFromStream is
 
       pubrecPacketIdentifier p1 `shouldBe` defaultPacketIdentifier
       pubrecPacketIdentifier p2 `shouldBe` defaultPacketIdentifier
+
 
     it "In the QoS2 delivery protocol, the Receiver MUST respond to a PUBREL packet by sending a PUBCOMP packet containing the same Packet Identifier as the PUBREL [MQTT-4.3.3-1]" $ do
       Session{..} <- newSession defaultConfig
@@ -250,46 +249,43 @@ spec = do
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
-      PUBREC _ <- readPacket is
+      PUBREC _ <- readFromStream is
 
       writePacket os $ PUBREL $ PubrelPacket defaultPacketIdentifier
 
-      PUBCOMP PubcompPacket{..} <- readPacket is
+      PUBCOMP PubcompPacket{..} <- readFromStream is
 
       pubcompPacketIdentifier `shouldBe` defaultPacketIdentifier
 
 
     it "In the QoS2 delivery protocol, the Receiver After it has sent a PUBCOMP, the receiver MUST treat any subsequent PUBLISH packet that contains that Packet Identifier as being a newSession publication [MQTT-4.3.3-1]" $ do
-      callbackMessage   <- newEmptyMVar
-
-      Session{..} <- newSession $ defaultConfig { ccPublishCallback = putMVar callbackMessage }
+      Session{..} <- newSession defaultConfig
 
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
-      PUBREC _ <- readPacket is
+      PUBREC _ <- readFromStream is
+      PublishResult message' <- readFromStream cIs
 
-      callbackMessage'        <- takeMVar callbackMessage
-      callbackMessage' `shouldBe` defaultMessage { messageQoS = QoS2 }
+      message' `shouldBe` defaultMessage { messageQoS = QoS2 }
 
       -- Check whether Receiver Before it has sent a PUBCOMP does not treat PUBLISH packet that contains that Packet Identifier as being a newSession publication
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
-      PUBREC _ <- readPacket is
-      a <- isEmptyMVar callbackMessage
-      a `shouldBe` True
+      PUBREC _ <- readFromStream is
+      Nothing <- timeout 100000 (S.read cIs)
 
       -- Send a PUBCOMP
       writePacket os $ PUBREL $ PubrelPacket defaultPacketIdentifier
-      PUBCOMP PubcompPacket{..} <- readPacket is
+      PUBCOMP PubcompPacket{..} <- readFromStream is
 
       writePacket os $ PUBLISH
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
-      PUBREC _ <- readPacket is
+      PUBREC _ <- readFromStream is
 
-      callbackMessage''        <- takeMVar callbackMessage
-      callbackMessage'' `shouldBe` defaultMessage { messageQoS = QoS2 }
+      PublishResult message'' <- readFromStream cIs
+      message'' `shouldBe` defaultMessage { messageQoS = QoS2 }
 
 
     it "When a Client reconnects with CleanSession set to 0, both the Client and Server MUST re-send any unacknowledged PUBLISH Packets (where QoS > 0) and PUBREL Packets using their original Packet Identifiers [MQTT-4.4.0-1]" $ do
@@ -303,28 +299,28 @@ spec = do
       --   defaultMessage { messageTopic = TopicName $ T.pack "a/b"
       --                  , messageQoS     = QoS1
       --                  }
-      -- PUBLISH p1 <- readPacket is
+      -- PUBLISH p1 <- readFromStream is
 
       -- sendPublish client $
       --   defaultMessage { messageTopic = TopicName $ T.pack "c/d"
       --                  , messageQoS     = QoS2
       --                  }
-      -- PUBLISH p2 <- readPacket is
+      -- PUBLISH p2 <- readFromStream is
 
       -- sendPublish client $
       --   defaultMessage { messageTopic = TopicName $ T.pack "a/b"
       --                  , messageQoS     = QoS1
       --                  }
-      -- PUBLISH p3 <- readPacket is
+      -- PUBLISH p3 <- readFromStream is
 
       -- disconnectClient os
 
-      -- CONNECT ConnectPacket{..} <- readPacket is
+      -- CONNECT ConnectPacket{..} <- readFromStream is
       -- writePacket os $ CONNACK (ConnackPacket False Accepted)
 
-      -- PUBLISH p1' <- readPacket is
-      -- PUBLISH p2' <- readPacket is
-      -- PUBLISH p3' <- readPacket is
+      -- PUBLISH p1' <- readFromStream is
+      -- PUBLISH p2' <- readFromStream is
+      -- PUBLISH p3' <- readFromStream is
 
       -- forM_ (zip [p1, p2, p3] [p1', p2', p3']) $ \(p, p') -> do
       --   publishPacketIdentifier p `shouldBe` publishPacketIdentifier p'
@@ -351,9 +347,9 @@ spec = do
                        , publishPacketIdentifier = Just $ PacketIdentifier 3
                        }
 
-      PUBACK p1 <- readPacket is
-      PUBACK p2 <- readPacket is
-      PUBACK p3 <- readPacket is
+      PUBACK p1 <- readFromStream is
+      PUBACK p2 <- readFromStream is
+      PUBACK p3 <- readFromStream is
 
       pubackPacketIdentifier p1 `shouldBe` PacketIdentifier 1
       pubackPacketIdentifier p2 `shouldBe` PacketIdentifier 2
@@ -378,9 +374,9 @@ spec = do
                        , publishPacketIdentifier = Just $ PacketIdentifier 3
                        }
 
-      PUBREC p1 <- readPacket is
-      PUBREC p2 <- readPacket is
-      PUBREC p3 <- readPacket is
+      PUBREC p1 <- readFromStream is
+      PUBREC p2 <- readFromStream is
+      PUBREC p3 <- readFromStream is
 
       pubrecPacketIdentifier p1 `shouldBe` PacketIdentifier 1
       pubrecPacketIdentifier p2 `shouldBe` PacketIdentifier 2
@@ -391,11 +387,11 @@ spec = do
       Session{..} <- newSession defaultConfig
 
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH p1 <- readPacket is
+      PUBLISH p1 <- readFromStream is
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH p2 <- readPacket is
+      PUBLISH p2 <- readFromStream is
       sendPublish client $ defaultMessage { messageQoS = QoS2 }
-      PUBLISH p3 <- readPacket is
+      PUBLISH p3 <- readFromStream is
 
       let packetIdentifier1 = fromJust $ publishPacketIdentifier p1
       let packetIdentifier2 = fromJust $ publishPacketIdentifier p2
@@ -405,9 +401,9 @@ spec = do
       writePacket os $ PUBREC (PubrecPacket packetIdentifier2)
       writePacket os $ PUBREC (PubrecPacket packetIdentifier3)
 
-      PUBREL p1' <- readPacket is
-      PUBREL p2' <- readPacket is
-      PUBREL p3' <- readPacket is
+      PUBREL p1' <- readFromStream is
+      PUBREL p2' <- readFromStream is
+      PUBREL p3' <- readFromStream is
 
       pubrelPacketIdentifier p1' `shouldBe` packetIdentifier1
       pubrelPacketIdentifier p2' `shouldBe` packetIdentifier2
@@ -438,11 +434,11 @@ spec = do
       Session{..} <- newSession defaultConfig
 
       sendPublish client $ defaultMessage { messageQoS = QoS1 }
-      PUBLISH p1     <- readPacket is
+      PUBLISH p1     <- readFromStream is
       sendSubscribe client [ (TopicFilter $ T.pack "c/d", QoS2) ]
-      SUBSCRIBE p2   <- readPacket is
+      SUBSCRIBE p2   <- readFromStream is
       sendUnsubscribe client [ TopicFilter $ T.pack "c/d" ]
-      UNSUBSCRIBE p3 <- readPacket is
+      UNSUBSCRIBE p3 <- readFromStream is
 
       Set.size (Set.fromList [ fromJust $ publishPacketIdentifier p1
                              , subscribePacketIdentifier p2
@@ -468,3 +464,4 @@ spec = do
 
     it "It is the responsibility of the Client to ensure that the interval between Control Packets being sent does not exceed the Keep Alive value. In the absence of sending any other Control Packets, the Client MUST send a PINGREQ Packet [MQTT-3.1.2-23]" $ do
       pending
+
