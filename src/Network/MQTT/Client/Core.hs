@@ -1,19 +1,14 @@
 {-# LANGUAGE RecordWildCards #-}
 module Network.MQTT.Client.Core
  ( runClient
- , stopClient
-
- , sendPublish
- , sendSubscribe
- , sendUnsubscribe
 
  , UserCredentials(..)
+ , ClientCommand(..)
  , ClientConfig(..)
- , ClientResult(..)
- , Client)
+ , ClientResult(..))
 where
 
-import           Control.Concurrent ( forkFinally, ThreadId )
+import           Control.Concurrent ( forkFinally, ThreadId, killThread )
 import           Control.Concurrent.MVar ( MVar, newEmptyMVar, putMVar )
 import           Control.Concurrent.STM ( STM, TQueue, TVar, newTVar, newTQueue, atomically, writeTQueue, writeTVar, modifyTVar, readTVar, throwSTM )
 import           Control.Exception ( Exception, throwIO )
@@ -52,11 +47,12 @@ data ClientResult
   | UnsubscribeResult [TopicFilter]
   deriving (Eq, Show)
 
-data Client
-  = Client
-    { threads :: (SynchronizedThread, SynchronizedThread)
-    , state   :: ClientState
-    }
+data ClientCommand
+  = PublishCommand Message
+  | SubscribeCommand [(TopicFilter, QoS)]
+  | UnsubscribeCommand [TopicFilter]
+  | StopCommand
+  deriving (Eq, Show)
 
 data ClientState
   = ClientState
@@ -99,7 +95,7 @@ forkThread proc = do
   threadId <- forkFinally proc (\_ -> putMVar handle ())
   return SynchronizedThread{..}
 
-runClient :: ClientConfig -> OutputStream ClientResult -> InputStream Packet -> OutputStream Packet -> IO Client
+runClient :: ClientConfig -> OutputStream ClientResult -> InputStream Packet -> OutputStream Packet -> IO (OutputStream ClientCommand)
 runClient ClientConfig{..} cOs is os = do
   gen <- newStdGen
   state <- atomically $ newClientState gen
@@ -119,10 +115,7 @@ runClient ClientConfig{..} cOs is os = do
     , connectKeepAlive        = ccKeepAlive
     }
 
-  return Client{..}
-
-stopClient :: Client -> IO ()
-stopClient = undefined
+  S.makeOutputStream $ commandHandler state threads
 
 sendPacket :: ClientState -> Packet -> STM ()
 sendPacket state p = writeTQueue (csSendQueue state) $ Just p
@@ -132,6 +125,39 @@ authenticator state cOs is = do
   -- Possible pattern-match failure is intended
   Just (CONNACK ConnackPacket{..}) <- S.read is
   unless (connackReturnCode /= Accepted) $ receiver state cOs is
+
+commandHandler :: ClientState -> (SynchronizedThread, SynchronizedThread) -> Maybe ClientCommand -> IO ()
+commandHandler _ _ Nothing = return ()
+commandHandler state (senderThread, receiverThread) (Just c) = do
+  debugM "MQTT.Client.Core" $ "Client command: " ++ show c
+  case c of
+    PublishCommand publishMessage -> atomically $ do
+      let publishDup = False
+
+      if messageQoS publishMessage == QoS0
+        then writeTQueue (csSendQueue state) $ Just $ PUBLISH
+          PublishPacket{ publishDup              = publishDup
+                       , publishMessage          = publishMessage
+                       , publishPacketIdentifier = Nothing
+                       }
+        else do
+          publishPacketIdentifier <- Just <$> genPacketIdentifier state
+          modifyTVar (csUnAckSentPublishPackets state) $ \p -> p Seq.|> PublishPacket{..}
+          sendPacket state $ PUBLISH PublishPacket{..}
+
+    SubscribeCommand subscribeTopicFiltersQoS  -> atomically $ do
+      subscribePacketIdentifier <- genPacketIdentifier state
+      modifyTVar (csUnAckSentSubscribePackets state) $ \p -> p Seq.|> SubscribePacket{..}
+      writeTQueue (csSendQueue state) (Just $ SUBSCRIBE SubscribePacket{..})
+
+    UnsubscribeCommand unsubscribeTopicFilters -> atomically $ do
+      unsubscribePacketIdentifier <- genPacketIdentifier state
+      modifyTVar (csUnAckSentUnsubscribePackets state) $ \p -> p Seq.|> UnsubscribePacket{..}
+      writeTQueue (csSendQueue state) (Just $ UNSUBSCRIBE UnsubscribePacket{..})
+
+    StopCommand -> do
+      killThread $ threadId senderThread
+      killThread $ threadId receiverThread
 
 receiver :: ClientState -> OutputStream ClientResult -> InputStream Packet -> IO ()
 receiver state cOs is = S.makeOutputStream handler >>= S.connect is
@@ -237,33 +263,6 @@ genPacketIdentifier state = do
   let packetIdentifier = PacketIdentifier identifier
   TSet.insert packetIdentifier $ csUsedPacketIdentifiers state
   return packetIdentifier
-
-sendPublish :: Client -> Message -> IO ()
-sendPublish client publishMessage = atomically $ do
-  let publishDup = False
-
-  if messageQoS publishMessage == QoS0
-    then writeTQueue (csSendQueue $ state client) $ Just $ PUBLISH
-      PublishPacket{ publishDup              = publishDup
-                   , publishMessage          = publishMessage
-                   , publishPacketIdentifier = Nothing
-                   }
-    else do
-      publishPacketIdentifier <- Just <$> genPacketIdentifier (state client)
-      modifyTVar (csUnAckSentPublishPackets $ state client) $ \p -> p Seq.|> PublishPacket{..}
-      sendPacket (state client) $ PUBLISH PublishPacket{..}
-
-sendSubscribe :: Client -> [(TopicFilter, QoS)] -> IO ()
-sendSubscribe client subscribeTopicFiltersQoS = atomically $ do
-  subscribePacketIdentifier <- genPacketIdentifier (state client)
-  modifyTVar (csUnAckSentSubscribePackets $ state client) $ \p -> p Seq.|> SubscribePacket{..}
-  writeTQueue (csSendQueue $ state client) (Just $ SUBSCRIBE SubscribePacket{..})
-
-sendUnsubscribe :: Client -> [TopicFilter] -> IO ()
-sendUnsubscribe client unsubscribeTopicFilters = atomically $ do
-  unsubscribePacketIdentifier <- genPacketIdentifier (state client)
-  modifyTVar (csUnAckSentUnsubscribePackets $ state client) $ \p -> p Seq.|> UnsubscribePacket{..}
-  writeTQueue (csSendQueue $ state client) (Just $ UNSUBSCRIBE UnsubscribePacket{..})
 
 sender :: TQueue (Maybe Packet) -> OutputStream Packet -> IO ()
 sender queue os = do
