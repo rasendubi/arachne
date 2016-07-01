@@ -115,7 +115,9 @@ runClient ClientConfig{..} cOs is os = do
     , connectKeepAlive        = ccKeepAlive
     }
 
-  S.makeOutputStream $ commandHandler state threads
+  S.contramapM_ logPacket =<< S.makeOutputStream (commandHandler state threads)
+    where
+      logPacket p = debugM "MQTT.Client.Core" $ "Client command: " ++ show p
 
 sendPacket :: ClientState -> Packet -> STM ()
 sendPacket state p = writeTQueue (csSendQueue state) $ Just p
@@ -128,10 +130,7 @@ authenticator state cOs is = do
 
 commandHandler :: ClientState -> (SynchronizedThread, SynchronizedThread) -> Maybe ClientCommand -> IO ()
 commandHandler _ _ Nothing = return ()
-commandHandler state (senderThread, receiverThread) (Just c) = do
-  debugM "MQTT.Client.Core" $ "Client command: " ++ show c
-  case c of
-    PublishCommand publishMessage -> atomically $ do
+commandHandler state _ (Just (PublishCommand publishMessage)) = atomically $ do
       let publishDup = False
 
       if messageQoS publishMessage == QoS0
@@ -145,17 +144,17 @@ commandHandler state (senderThread, receiverThread) (Just c) = do
           modifyTVar (csUnAckSentPublishPackets state) $ \p -> p Seq.|> PublishPacket{..}
           sendPacket state $ PUBLISH PublishPacket{..}
 
-    SubscribeCommand subscribeTopicFiltersQoS  -> atomically $ do
+commandHandler state _ (Just (SubscribeCommand subscribeTopicFiltersQoS)) = atomically $ do
       subscribePacketIdentifier <- genPacketIdentifier state
       modifyTVar (csUnAckSentSubscribePackets state) $ \p -> p Seq.|> SubscribePacket{..}
       writeTQueue (csSendQueue state) (Just $ SUBSCRIBE SubscribePacket{..})
 
-    UnsubscribeCommand unsubscribeTopicFilters -> atomically $ do
+commandHandler state _ (Just (UnsubscribeCommand unsubscribeTopicFilters)) = atomically $ do
       unsubscribePacketIdentifier <- genPacketIdentifier state
       modifyTVar (csUnAckSentUnsubscribePackets state) $ \p -> p Seq.|> UnsubscribePacket{..}
       writeTQueue (csSendQueue state) (Just $ UNSUBSCRIBE UnsubscribePacket{..})
 
-    StopCommand -> do
+commandHandler _ (senderThread, receiverThread) (Just StopCommand) = do
       killThread $ threadId senderThread
       killThread $ threadId receiverThread
 
