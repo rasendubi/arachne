@@ -30,19 +30,19 @@ debugTests = updateGlobalLogger rootLoggerName (setLevel DEBUG)
 
 data Session
   = Session
-    { is     :: InputStream Packet
-    , os     :: OutputStream Packet
-    , crIs   :: InputStream ClientResult
-    , ccOs   :: OutputStream ClientCommand
+    { is         :: InputStream Packet
+    , os         :: OutputStream Packet
+    , result_is  :: InputStream ClientResult
+    , command_os :: OutputStream ClientCommand
     }
 
 newSession :: ClientConfig -> IO Session
 newSession config = do
   (is', os)    <- S.makeChanPipe
   (is, os')    <- S.makeChanPipe
-  (crIs, crOs) <- S.makeChanPipe
+  (result_is, result_os) <- S.makeChanPipe
 
-  ccOs <- runClient config crOs is' os'
+  command_os <- runClient config result_os is' os'
 
   CONNECT _ <- readFromStream is
   writeToStream os $ CONNACK (ConnackPacket False Accepted)
@@ -86,7 +86,7 @@ spec = do
 
     it "In the QoS 0 delivery protocol, the Sender MUST send a PUBLISH packet with QoS=0, DUP=0 [MQTT-4.3.1-1]" $ do
       Session{..} <- newSession defaultConfig
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS0 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS0 }
       PUBLISH PublishPacket{..} <- readFromStream is
       messageQoS publishMessage `shouldBe` QoS0
       publishDup                `shouldBe` False
@@ -95,11 +95,11 @@ spec = do
     it "In the QoS 1 delivery protocol, the Sender MUST assign an unused Packet Identifier each time it has a newSession Application Message to publish [MQTT-4.3.2-1]" $ do
       Session{..} <- newSession defaultConfig
 
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
       PUBLISH p1 <- readFromStream is
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
       PUBLISH p2 <- readFromStream is
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
       PUBLISH p3 <- readFromStream is
 
       Set.size (Set.fromList [ publishPacketIdentifier p1
@@ -110,7 +110,7 @@ spec = do
 
     it "In the QoS 1 delivery protocol, the Sender MUST send a PUBLISH Packet containing this Packet Identifier with QoS=1, DUP=0 [MQTT-4.3.2-1]" $ do
       Session{..} <- newSession defaultConfig
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
       PUBLISH PublishPacket{..} <- readFromStream is
       messageQoS publishMessage `shouldBe` QoS1
       publishDup                `shouldBe` False
@@ -127,7 +127,7 @@ spec = do
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS1 } }
 
       PUBACK PubackPacket{..} <- readFromStream is
-      PublishResult message   <- readFromStream crIs
+      PublishResult message   <- readFromStream result_is
 
       message                `shouldBe` defaultMessage { messageQoS = QoS1 }
       pubackPacketIdentifier `shouldBe` defaultPacketIdentifier
@@ -140,7 +140,7 @@ spec = do
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS1 } }
 
       PUBACK p1              <- readFromStream is
-      PublishResult message' <- readFromStream crIs
+      PublishResult message' <- readFromStream result_is
 
       message'                  `shouldBe` defaultMessage { messageQoS = QoS1 }
       pubackPacketIdentifier p1 `shouldBe` defaultPacketIdentifier
@@ -151,7 +151,7 @@ spec = do
                        }
 
       PUBACK p2               <- readFromStream is
-      PublishResult message'' <- readFromStream crIs
+      PublishResult message'' <- readFromStream result_is
 
       message''                 `shouldBe` defaultMessage { messageQoS = QoS1 }
       pubackPacketIdentifier p2 `shouldBe` defaultPacketIdentifier
@@ -160,11 +160,11 @@ spec = do
     it "In the QoS 2 delivery protocol, the Sender MUST assign an unused Packet Identifier when it has a newSession Application Message to publish [MQTT-4.3.3-1]" $ do
       Session{..} <- newSession defaultConfig
 
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH p1 <- readFromStream is
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH p2 <- readFromStream is
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH p3 <- readFromStream is
 
       Set.size (Set.fromList [ publishPacketIdentifier p1
@@ -175,7 +175,7 @@ spec = do
 
     it "In the QoS 2 delivery protocol, the Sender MUST send a PUBLISH packet containing this Packet Identifier with QoS=2, DUP=0 [MQTT-4.3.3-1]" $ do
       Session{..} <- newSession defaultConfig
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH PublishPacket{..} <- readFromStream is
       messageQoS publishMessage `shouldBe` QoS2
       publishDup                `shouldBe` False
@@ -188,7 +188,7 @@ spec = do
     it "In the QoS 2 delivery protocol, the Sender MUST send a PUBREL packet when it receives a PUBREC packet from the receiver [MQTT-4.3.3-1]" $ do
       Session{..} <- newSession defaultConfig
 
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH PublishPacket{..} <- readFromStream is
       let packetIdentifier = fromJust publishPacketIdentifier
       writeToStream os $ PUBREC (PubrecPacket packetIdentifier)
@@ -212,7 +212,7 @@ spec = do
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
       PUBREC PubrecPacket{..} <- readFromStream is
-      PublishResult message   <- readFromStream crIs
+      PublishResult message   <- readFromStream result_is
 
       message                `shouldBe` defaultMessage { messageQoS = QoS2 }
       pubrecPacketIdentifier `shouldBe` defaultPacketIdentifier
@@ -257,7 +257,7 @@ spec = do
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
       PUBREC _ <- readFromStream is
-      PublishResult message' <- readFromStream crIs
+      PublishResult message' <- readFromStream result_is
 
       message' `shouldBe` defaultMessage { messageQoS = QoS2 }
 
@@ -266,7 +266,7 @@ spec = do
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
 
       PUBREC _ <- readFromStream is
-      Nothing <- timeout 100000 (S.read crIs)
+      Nothing <- timeout 100000 (S.read result_is)
 
       -- Send a PUBCOMP
       writeToStream os $ PUBREL $ PubrelPacket defaultPacketIdentifier
@@ -276,7 +276,7 @@ spec = do
         defaultPublish { publishMessage = defaultMessage { messageQoS = QoS2 } }
       PUBREC _ <- readFromStream is
 
-      PublishResult message'' <- readFromStream crIs
+      PublishResult message'' <- readFromStream result_is
       message'' `shouldBe` defaultMessage { messageQoS = QoS2 }
 
 
@@ -287,19 +287,19 @@ spec = do
     it "When it re-sends any PUBLISH packets, it MUST re-send them in the order in which the original PUBLISH packets were sent (this applies to QoS 1 and QoS 2 messages) [MQTT-4.6.0-1]" $ do
       -- Session{..} <- newSession defaultConfig
 
-      -- writeToStream ccOs $ PublishCommand $
+      -- writeToStream command_os $ PublishCommand $
       --   defaultMessage { messageTopic = TopicName $ T.pack "a/b"
       --                  , messageQoS     = QoS1
       --                  }
       -- PUBLISH p1 <- readFromStream is
 
-      -- writeToStream ccOs $ PublishCommand $
+      -- writeToStream command_os $ PublishCommand $
       --   defaultMessage { messageTopic = TopicName $ T.pack "c/d"
       --                  , messageQoS     = QoS2
       --                  }
       -- PUBLISH p2 <- readFromStream is
 
-      -- writeToStream ccOs $ PublishCommand $
+      -- writeToStream command_os $ PublishCommand $
       --   defaultMessage { messageTopic = TopicName $ T.pack "a/b"
       --                  , messageQoS     = QoS1
       --                  }
@@ -378,11 +378,11 @@ spec = do
     it "It MUST send PUBREL packets in the order in which the corresponding PUBREC packets were received (QoS 2 messages) [MQTT-4.6.0-4]" $ do
       Session{..} <- newSession defaultConfig
 
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH p1 <- readFromStream is
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH p2 <- readFromStream is
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS2 }
       PUBLISH p3 <- readFromStream is
 
       let packetIdentifier1 = fromJust $ publishPacketIdentifier p1
@@ -425,11 +425,11 @@ spec = do
     it "Each time a Client sends a newSession packet of one of these types (SUBSCRIBE, UNSUBSCRIBE, and PUBLISH (in cases where QoS > 0)) it MUST assign it a currently unused Packet Identifier [MQTT-2.3.1-2]" $ do
       Session{..} <- newSession defaultConfig
 
-      writeToStream ccOs $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
+      writeToStream command_os $ PublishCommand $ defaultMessage { messageQoS = QoS1 }
       PUBLISH p1     <- readFromStream is
-      writeToStream ccOs $ SubscribeCommand [ (TopicFilter $ T.pack "c/d", QoS2) ]
+      writeToStream command_os $ SubscribeCommand [ (TopicFilter $ T.pack "c/d", QoS2) ]
       SUBSCRIBE p2   <- readFromStream is
-      writeToStream ccOs $ UnsubscribeCommand [ TopicFilter $ T.pack "c/d" ]
+      writeToStream command_os $ UnsubscribeCommand [ TopicFilter $ T.pack "c/d" ]
       UNSUBSCRIBE p3 <- readFromStream is
 
       Set.size (Set.fromList [ fromJust $ publishPacketIdentifier p1

@@ -96,12 +96,12 @@ forkThread proc = do
   return SynchronizedThread{..}
 
 runClient :: ClientConfig -> OutputStream ClientResult -> InputStream Packet -> OutputStream Packet -> IO (OutputStream ClientCommand)
-runClient ClientConfig{..} cOs is os = do
+runClient ClientConfig{..} result_os is os = do
   gen <- newStdGen
   state <- atomically $ newClientState gen
 
   senderThread   <- forkThread $ sender (csSendQueue state) os
-  receiverThread <- forkThread $ authenticator state cOs is
+  receiverThread <- forkThread $ authenticator state result_os is
   let threads = (senderThread, receiverThread)
 
   sendConnect state
@@ -123,43 +123,43 @@ sendPacket :: ClientState -> Packet -> STM ()
 sendPacket state p = writeTQueue (csSendQueue state) $ Just p
 
 authenticator :: ClientState -> OutputStream ClientResult -> InputStream Packet -> IO ()
-authenticator state cOs is = do
+authenticator state result_os is = do
   -- Possible pattern-match failure is intended
   Just (CONNACK ConnackPacket{..}) <- S.read is
-  unless (connackReturnCode /= Accepted) $ receiver state cOs is
+  unless (connackReturnCode /= Accepted) $ receiver state result_os is
 
 commandHandler :: ClientState -> (SynchronizedThread, SynchronizedThread) -> Maybe ClientCommand -> IO ()
 commandHandler _ _ Nothing = return ()
 commandHandler state _ (Just (PublishCommand publishMessage)) = atomically $ do
-      let publishDup = False
+  let publishDup = False
 
-      if messageQoS publishMessage == QoS0
-        then writeTQueue (csSendQueue state) $ Just $ PUBLISH
-          PublishPacket{ publishDup              = publishDup
-                       , publishMessage          = publishMessage
-                       , publishPacketIdentifier = Nothing
-                       }
-        else do
-          publishPacketIdentifier <- Just <$> genPacketIdentifier state
-          modifyTVar (csUnAckSentPublishPackets state) $ \p -> p Seq.|> PublishPacket{..}
-          sendPacket state $ PUBLISH PublishPacket{..}
+  if messageQoS publishMessage == QoS0
+    then writeTQueue (csSendQueue state) $ Just $ PUBLISH
+      PublishPacket{ publishDup              = publishDup
+                   , publishMessage          = publishMessage
+                   , publishPacketIdentifier = Nothing
+                   }
+    else do
+      publishPacketIdentifier <- Just <$> genPacketIdentifier state
+      modifyTVar (csUnAckSentPublishPackets state) $ \p -> p Seq.|> PublishPacket{..}
+      sendPacket state $ PUBLISH PublishPacket{..}
 
 commandHandler state _ (Just (SubscribeCommand subscribeTopicFiltersQoS)) = atomically $ do
-      subscribePacketIdentifier <- genPacketIdentifier state
-      modifyTVar (csUnAckSentSubscribePackets state) $ \p -> p Seq.|> SubscribePacket{..}
-      writeTQueue (csSendQueue state) (Just $ SUBSCRIBE SubscribePacket{..})
+  subscribePacketIdentifier <- genPacketIdentifier state
+  modifyTVar (csUnAckSentSubscribePackets state) $ \p -> p Seq.|> SubscribePacket{..}
+  writeTQueue (csSendQueue state) (Just $ SUBSCRIBE SubscribePacket{..})
 
 commandHandler state _ (Just (UnsubscribeCommand unsubscribeTopicFilters)) = atomically $ do
-      unsubscribePacketIdentifier <- genPacketIdentifier state
-      modifyTVar (csUnAckSentUnsubscribePackets state) $ \p -> p Seq.|> UnsubscribePacket{..}
-      writeTQueue (csSendQueue state) (Just $ UNSUBSCRIBE UnsubscribePacket{..})
+  unsubscribePacketIdentifier <- genPacketIdentifier state
+  modifyTVar (csUnAckSentUnsubscribePackets state) $ \p -> p Seq.|> UnsubscribePacket{..}
+  writeTQueue (csSendQueue state) (Just $ UNSUBSCRIBE UnsubscribePacket{..})
 
 commandHandler _ (senderThread, receiverThread) (Just StopCommand) = do
-      killThread $ threadId senderThread
-      killThread $ threadId receiverThread
+  killThread $ threadId senderThread
+  killThread $ threadId receiverThread
 
 receiver :: ClientState -> OutputStream ClientResult -> InputStream Packet -> IO ()
-receiver state cOs is = S.makeOutputStream handler >>= S.connect is
+receiver state result_os is = S.makeOutputStream handler >>= S.connect is
   where
     handler Nothing = do
       debugM "MQTT.Client.Core" "Re-connecting: "
@@ -202,9 +202,9 @@ receiver state cOs is = S.makeOutputStream handler >>= S.connect is
           let packetIdentifier = publishPacketIdentifier publishPacket
           case qos of
             QoS0 ->
-              writeTo cOs $ Just (PublishResult $ publishMessage publishPacket)
+              writeTo result_os $ Just (PublishResult $ publishMessage publishPacket)
             QoS1 -> do
-              writeTo cOs $ Just (PublishResult $ publishMessage publishPacket)
+              writeTo result_os $ Just (PublishResult $ publishMessage publishPacket)
               atomically $ sendPacket state $ PUBACK (PubackPacket $ fromJust packetIdentifier)
             QoS2 -> do
               let packetIdentifier' = fromJust packetIdentifier
@@ -216,7 +216,7 @@ receiver state cOs is = S.makeOutputStream handler >>= S.connect is
                 unless present $ TSet.insert packetIdentifier' s
                 return present
 
-              unless present $ writeTo cOs $ Just (PublishResult $ publishMessage publishPacket)
+              unless present $ writeTo result_os $ Just (PublishResult $ publishMessage publishPacket)
 
         PUBREL pubrelPacket -> atomically $ do
           let packetIdentifier = pubrelPacketIdentifier pubrelPacket
@@ -232,7 +232,7 @@ receiver state cOs is = S.makeOutputStream handler >>= S.connect is
             writeTVar (csUnAckSentSubscribePackets state) $ Seq.drop 1 unAckSentSubscribePackets
             TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
             return $ fst <$> subscribeTopicFiltersQoS subscribePacket
-          writeTo cOs $ Just (SubscribeResult $ zip topicFilters (subackResponses subackPacket))
+          writeTo result_os $ Just (SubscribeResult $ zip topicFilters (subackResponses subackPacket))
 
         UNSUBACK unsubackPacket -> do
           unsubscribePacket <- atomically $ do
@@ -243,7 +243,7 @@ receiver state cOs is = S.makeOutputStream handler >>= S.connect is
             writeTVar (csUnAckSentUnsubscribePackets state) $ Seq.drop 1 unAckSentUnsubscribePackets
             TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
             return unsubscribePacket
-          writeTo cOs $ Just (UnsubscribeResult $ unsubscribeTopicFilters unsubscribePacket)
+          writeTo result_os $ Just (UnsubscribeResult $ unsubscribeTopicFilters unsubscribePacket)
 
         _ -> return ()
 
