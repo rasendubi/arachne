@@ -22,6 +22,7 @@ library
                        Network.MQTT.Client
                        Network.MQTT.Client.Core
                        Network.MQTT.Client.Socket
+                       Network.MQTT.Client.Utils
                        Network.MQTT.SN.Packet
                        Network.MQTT.SN.Parser
                        Network.MQTT.SN.Encoder

@@ -1,6 +1,11 @@
 {-# LANGUAGE RecordWildCards #-}
-module Network.MQTT.Client.Helper
+module Network.MQTT.Client.Utils
   ( fromCallbacks
+
+  , publish
+  , subscribe
+  , unsubscribe
+
   , Callbacks(..))
   where
 
@@ -25,3 +30,15 @@ fromCallbacks Callbacks{..} = S.makeOutputStream handler
     handler (Just (PublishResult message))           = publishCallback message
     handler (Just (SubscribeResult topicFiltersQoS)) = subscribeCallback topicFiltersQoS
     handler (Just (UnsubscribeResult topicFilters))  = unsubscribeCallback topicFilters
+
+publish :: OutputStream ClientCommand -> Message -> IO ()
+publish os = writeTo os . PublishCommand
+
+subscribe :: OutputStream ClientCommand -> [(TopicFilter, QoS)] -> IO ()
+subscribe os = writeTo os . SubscribeCommand
+
+unsubscribe :: OutputStream ClientCommand -> [TopicFilter] -> IO ()
+unsubscribe os = writeTo os . UnsubscribeCommand
+
+writeTo :: OutputStream a -> a -> IO ()
+writeTo os x = S.write (Just x) os
