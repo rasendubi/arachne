@@ -285,40 +285,39 @@ spec = do
 
 
     it "When it re-sends any PUBLISH packets, it MUST re-send them in the order in which the original PUBLISH packets were sent (this applies to QoS 1 and QoS 2 messages) [MQTT-4.6.0-1]" $ do
-      -- Session{..} <- newSession defaultConfig
+      Session{..} <- newSession $ defaultConfig { ccCleanSession = False }
 
-      -- writeToStream command_os $ PublishCommand $
-      --   defaultMessage { messageTopic = TopicName $ T.pack "a/b"
-      --                  , messageQoS     = QoS1
-      --                  }
-      -- PUBLISH p1 <- readFromStream is
+      writeToStream command_os $ PublishCommand $
+        defaultMessage { messageTopic = TopicName $ T.pack "a/b"
+                       , messageQoS     = QoS1
+                       }
+      PUBLISH p1 <- readFromStream is
 
-      -- writeToStream command_os $ PublishCommand $
-      --   defaultMessage { messageTopic = TopicName $ T.pack "c/d"
-      --                  , messageQoS     = QoS2
-      --                  }
-      -- PUBLISH p2 <- readFromStream is
+      writeToStream command_os $ PublishCommand $
+        defaultMessage { messageTopic = TopicName $ T.pack "c/d"
+                       , messageQoS     = QoS2
+                       }
+      PUBLISH p2 <- readFromStream is
 
-      -- writeToStream command_os $ PublishCommand $
-      --   defaultMessage { messageTopic = TopicName $ T.pack "a/b"
-      --                  , messageQoS     = QoS1
-      --                  }
-      -- PUBLISH p3 <- readFromStream is
+      writeToStream command_os $ PublishCommand $
+        defaultMessage { messageTopic = TopicName $ T.pack "a/b"
+                       , messageQoS     = QoS1
+                       }
+      PUBLISH p3 <- readFromStream is
 
-      -- disconnectClient os
+      disconnectClient os
 
-      -- CONNECT ConnectPacket{..} <- readFromStream is
-      -- writeToStream os $ CONNACK (ConnackPacket False Accepted)
+      CONNECT ConnectPacket{..} <- readFromStream is
+      writeToStream os $ CONNACK (ConnackPacket False Accepted)
 
-      -- PUBLISH p1' <- readFromStream is
-      -- PUBLISH p2' <- readFromStream is
-      -- PUBLISH p3' <- readFromStream is
+      PUBLISH p1' <- readFromStream is
+      PUBLISH p2' <- readFromStream is
+      PUBLISH p3' <- readFromStream is
 
-      -- forM_ (zip [p1, p2, p3] [p1', p2', p3']) $ \(p, p') -> do
-      --   publishPacketIdentifier p `shouldBe` publishPacketIdentifier p'
-      --   publishDup p  `shouldBe` False
-      --   publishDup p' `shouldBe` True
-      pending
+      forM_ (zip [p1, p2, p3] [p1', p2', p3']) $ \(p, p') -> do
+        publishPacketIdentifier p `shouldBe` publishPacketIdentifier p'
+        publishDup p  `shouldBe` False
+        publishDup p' `shouldBe` True
 
 
     it "It MUST send PUBACK packets in the order in which the corresponding PUBLISH packets were received (QoS 1 messages) [MQTT-4.6.0-2]" $ do

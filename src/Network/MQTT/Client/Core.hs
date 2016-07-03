@@ -12,7 +12,7 @@ import           Control.Concurrent ( forkFinally, ThreadId, killThread )
 import           Control.Concurrent.MVar ( MVar, newEmptyMVar, putMVar )
 import           Control.Concurrent.STM ( STM, TQueue, TVar, newTVar, newTQueue, atomically, writeTQueue, writeTVar, modifyTVar, readTVar, throwSTM )
 import           Control.Exception ( Exception, throwIO )
-import           Control.Monad ( unless, when )
+import           Control.Monad ( unless, when, forM_ )
 import           Control.Monad.Loops ( dropWhileM )
 import           Data.Maybe ( fromJust )
 import qualified Data.Sequence as Seq
@@ -64,6 +64,7 @@ data ClientState
     , csUnAckSentSubscribePackets   :: TVar (Seq.Seq SubscribePacket)
     , csUnAckSentUnsubscribePackets :: TVar (Seq.Seq UnsubscribePacket)
     , csUnAckReceivedPublishIds     :: TSet.Set PacketIdentifier
+    , csConfig                      :: ClientConfig
     }
 
 data SynchronizedThread
@@ -78,8 +79,8 @@ data MQTTError = MQTTError
 instance Exception MQTTError
 
 
-newClientState :: StdGen -> STM ClientState
-newClientState gen =
+newClientState :: ClientConfig -> StdGen -> STM ClientState
+newClientState config gen =
   ClientState <$> newTQueue
               <*> TSet.new
               <*> newTVar (randomRs (0, 65535) gen)
@@ -88,6 +89,7 @@ newClientState gen =
               <*> newTVar Seq.empty
               <*> newTVar Seq.empty
               <*> TSet.new
+              <*> pure config
 
 forkThread :: IO () -> IO SynchronizedThread
 forkThread proc = do
@@ -96,9 +98,9 @@ forkThread proc = do
   return SynchronizedThread{..}
 
 runClient :: ClientConfig -> OutputStream ClientResult -> InputStream Packet -> OutputStream Packet -> IO (OutputStream ClientCommand)
-runClient ClientConfig{..} result_os is os = do
+runClient config@ClientConfig{..} result_os is os = do
   gen <- newStdGen
-  state <- atomically $ newClientState gen
+  state <- atomically $ newClientState config gen
 
   senderThread   <- forkThread $ sender (csSendQueue state) os
   receiverThread <- forkThread $ authenticator state result_os is
@@ -163,7 +165,26 @@ receiver state result_os is = S.makeOutputStream handler >>= S.connect is
   where
     handler Nothing = do
       debugM "MQTT.Client.Core" "Re-connecting: "
-      undefined
+      let ClientConfig{..} = csConfig state
+      sendConnect state
+        ConnectPacket
+        { connectClientIdentifier = ccClientIdenfier
+        , connectProtocolLevel    = 0x04
+        , connectWillMsg          = ccWillMsg
+        , connectUserName         = fmap userName ccUserCredentials
+        , connectPassword         = maybe Nothing password ccUserCredentials
+        , connectCleanSession     = ccCleanSession
+        , connectKeepAlive        = ccKeepAlive
+        }
+      when (not ccCleanSession) $ atomically $ do
+        unAckSentPublishPackets <- readTVar $ csUnAckSentPublishPackets state
+        forM_ unAckSentPublishPackets $ \p -> sendPacket state $ PUBLISH $ p { publishDup = True }
+        unAckSentPubrelPackets <- readTVar $ csUnAckSentPubrelPackets state
+        forM_ unAckSentPubrelPackets $ sendPacket state . PUBREL
+        unAckSentSubscribePackets <- readTVar $ csUnAckSentSubscribePackets state
+        forM_ unAckSentSubscribePackets $ sendPacket state . SUBSCRIBE
+        unAckSentUnsubscribePackets <- readTVar $ csUnAckSentUnsubscribePackets state
+        forM_ unAckSentUnsubscribePackets $ sendPacket state . UNSUBSCRIBE
     handler (Just p) = do
       debugM "MQTT.Client.Core" $ "Received: " ++ show p
       case p of
