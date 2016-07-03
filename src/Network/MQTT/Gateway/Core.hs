@@ -32,10 +32,13 @@ import qualified System.IO.Streams as S
 
 import           System.Log.Logger (debugM)
 
+import Network.MQTT.Client.Core (ClientCommand(..), ClientResult(..))
+
 -- | Internal gateway state.
 data Gateway =
   Gateway
   { gClients :: STM.Map MQTT.ClientIdentifier GatewayClient
+  , gUpstream :: OutputStream ClientCommand
   }
 
 data GatewayClient =
@@ -51,8 +54,14 @@ instance Exception MQTTError
 -- | Creates a new Gateway.
 --
 -- Note that this doesn't start gateway operation.
-newGateway :: IO Gateway
-newGateway = Gateway <$> STM.Map.newIO
+newGateway :: OutputStream ClientCommand -> IO (Gateway, OutputStream ClientResult)
+newGateway command_os = do
+  gw <- Gateway <$> STM.Map.newIO <*> pure command_os
+  result_is <- S.makeOutputStream (clientResultHandler gw)
+  return (gw, result_is)
+
+clientResultHandler :: Gateway -> Maybe ClientResult -> IO ()
+clientResultHandler = undefined
 
 newGatewayClient :: IO GatewayClient
 newGatewayClient = GatewayClient <$> newTQueueIO

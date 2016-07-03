@@ -10,6 +10,7 @@ import           Control.Monad.Reader (ReaderT, asks, runReaderT)
 import qualified Data.Text as T
 
 import qualified Network.MQTT.Gateway as Gateway
+import           Network.MQTT.Client (ClientCommand, ClientResult)
 import           Network.MQTT.Packet
 import           Network.MQTT.Utils
 
@@ -17,6 +18,7 @@ import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, soc
 
 import           System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as S
+import qualified System.IO.Streams.Concurrent as S
 
 import           System.Log (Priority(DEBUG))
 import           System.Log.Logger (debugM, rootLoggerName, setLevel, updateGlobalLogger)
@@ -33,7 +35,7 @@ spec = do
   describe "server" $ do
     it "should accept connect message" $ do
       -- debugTests
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
                        { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
@@ -47,7 +49,7 @@ spec = do
           expectPacket (CONNACK $ ConnackPacket False Accepted)
 
     it "should answer pingreq" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
                        { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
@@ -63,13 +65,13 @@ spec = do
           expectPacket (PINGRESP PingrespPacket)
 
     it "should reject first message if it's not CONNECT" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         withClient testAddr $ do
           writePacket $ PINGREQ PingreqPacket
           expectConnectionClosed
 
     it "MQTT-3.1.0-2: The Server MUST process a second CONNECT Packet sent from a Client as a protocol violation and disconnect the Client" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         withClient testAddr $ do
           writePacket (CONNECT $ ConnectPacket
                        { connectClientIdentifier = ClientIdentifier $ T.pack "hi"
@@ -93,7 +95,7 @@ spec = do
           expectConnectionClosed
 
     it "should close connection if new client connects with the same client identifier" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         c1 <- openClient testAddr
         c2 <- openClient testAddr
 
@@ -127,7 +129,7 @@ spec = do
         closeClient c2
 
     it "should not disconnect if the client identifier is different" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         c1 <- openClient testAddr
         c2 <- openClient testAddr
 
@@ -167,7 +169,7 @@ spec = do
         closeClient c2
 
     it "MQTT-3.1.2-2: The Server MUST respond to the CONNECT Packet with a CONNACK return code 0x01 (unacceptable protocol level) and then disconnect the Client if the Protocol Level is not supported by the Server" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         forM_ ([0x00 .. 0x03] ++ [0x05 .. 0xff]) $ \protocolLevel ->
           withClient testAddr $ do
             writePacket (CONNECT $ ConnectPacket
@@ -182,7 +184,7 @@ spec = do
             expectPacket (CONNACK $ ConnackPacket False UnacceptableProtocol)
 
     it "should accept subscribe packet" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         withClient testAddr $ do
           clientConnect "client1"
           writePacket $
@@ -197,7 +199,7 @@ spec = do
             }
 
     it "should accept subscribe with multiple topics" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         withClient testAddr $ do
           clientConnect "client1"
           writePacket $
@@ -214,7 +216,7 @@ spec = do
             }
 
     it "should reject subscribe packet if client is not connected" $ do
-      withServer $ \testAddr -> do
+      withServer $ \_ _ testAddr -> do
         withClient testAddr $ do
           writePacket $
             SUBSCRIBE SubscribePacket
@@ -236,7 +238,7 @@ spec = do
           { unsubackPacketIdentifier = PacketIdentifier 0xab }
 
 withSingleClient :: CCMonad () -> IO ()
-withSingleClient x = withServer $ \testAddr -> withClient testAddr x
+withSingleClient x = withServer $ \_ _ testAddr -> withClient testAddr x
 
 clientConnect :: String -> CCMonad ()
 clientConnect clientId = do
@@ -260,15 +262,17 @@ data ClientConnection =
 
 type CCMonad a = ReaderT ClientConnection IO a
 
-withServer :: (AddrInfo -> IO a) -> IO a
+withServer :: (InputStream ClientCommand -> OutputStream ClientResult -> AddrInfo -> IO a) -> IO a
 withServer x = do
-  gw <- Gateway.newGateway
+  (command_is, command_os) <- S.makeChanPipe
+
+  (gw, result_os) <- Gateway.newGateway command_os
   bracket (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
     bind sock (addrAddress addr)
     listen sock 5
     withThread (Gateway.listenOnSocket gw sock) $ do
       port <- socketPort sock
-      x Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet port 0 }
+      x command_is result_os Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet port 0 }
   where
     addr = Gateway.defaultMQTTAddr{ addrAddress = SockAddrInet aNY_PORT 0 }
 

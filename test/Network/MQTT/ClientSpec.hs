@@ -58,7 +58,7 @@ disconnectClient :: OutputStream Packet -> IO ()
 disconnectClient = S.write Nothing
 
 defaultConfig = ClientConfig
-                { ccClientIdenfier   = ClientIdentifier $ T.pack "arachne-test"
+                { ccClientIdentifier = ClientIdentifier $ T.pack "arachne-test"
                 , ccWillMsg          = Nothing
                 , ccUserCredentials  = Nothing
                 , ccCleanSession     = True

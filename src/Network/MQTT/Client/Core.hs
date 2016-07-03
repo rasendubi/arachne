@@ -34,7 +34,7 @@ data UserCredentials
 
 data ClientConfig
   = ClientConfig
-    { ccClientIdenfier   :: !ClientIdentifier
+    { ccClientIdentifier :: !ClientIdentifier
     , ccWillMsg          :: !(Maybe Message)
     , ccUserCredentials  :: !(Maybe UserCredentials)
     , ccCleanSession     :: !Bool
@@ -106,7 +106,7 @@ runClient ClientConfig{..} result_os is os = do
 
   sendConnect state
     ConnectPacket
-    { connectClientIdentifier = ccClientIdenfier
+    { connectClientIdentifier = ccClientIdentifier
     , connectProtocolLevel    = 0x04
     , connectWillMsg          = ccWillMsg
     , connectUserName         = fmap userName ccUserCredentials
