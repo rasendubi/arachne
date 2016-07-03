@@ -10,6 +10,8 @@ import qualified Network.MQTT.Gateway as Gateway
 import qualified Network.MQTT.Packet as MQTT
 import           Network.Socket (getAddrInfo, defaultHints)
 
+import           Network.URI
+
 import           System.Environment (getArgs)
 
 import qualified System.IO.Streams as S
@@ -19,16 +21,22 @@ import           System.Log.Logger (Priority(DEBUG), rootLoggerName, setLevel, u
 
 main :: IO ()
 main = do
-  [host, port] <- getArgs
-
   updateGlobalLogger rootLoggerName (setLevel DEBUG)
+
+  [upstream] <- getArgs
+  let
+    Just uri = parseURIReference $ "//" ++ upstream
+    URI{ uriAuthority = Just URIAuth{ uriRegName = host, uriPort = ':' : port } } = uri
+
+  putStrLn $ "Connecting to: " ++ show uri
+
   withSocketsDo $ do
     addrInfo : _ <- getAddrInfo (Just defaultHints) (Just host) (Just port)
 
     (command_is, command_os) <- S.makeChanPipe
     (gw, result_os) <- Gateway.newGateway command_os
 
-    t <- forkIO $ do
+    _t <- forkIO $ do
       (_sock, command_os') <- Client.runClientWithSockets clientConfig result_os addrInfo
       S.connect command_is command_os'
 
