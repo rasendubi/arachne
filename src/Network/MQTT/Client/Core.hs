@@ -176,15 +176,22 @@ receiver state result_os is = S.makeOutputStream handler >>= S.connect is
         , connectCleanSession     = ccCleanSession
         , connectKeepAlive        = ccKeepAlive
         }
-      when (not ccCleanSession) $ atomically $ do
-        unAckSentPublishPackets <- readTVar $ csUnAckSentPublishPackets state
-        forM_ unAckSentPublishPackets $ \p -> sendPacket state $ PUBLISH $ p { publishDup = True }
-        unAckSentPubrelPackets <- readTVar $ csUnAckSentPubrelPackets state
-        forM_ unAckSentPubrelPackets $ sendPacket state . PUBREL
-        unAckSentSubscribePackets <- readTVar $ csUnAckSentSubscribePackets state
-        forM_ unAckSentSubscribePackets $ sendPacket state . SUBSCRIBE
-        unAckSentUnsubscribePackets <- readTVar $ csUnAckSentUnsubscribePackets state
-        forM_ unAckSentUnsubscribePackets $ sendPacket state . UNSUBSCRIBE
+      if not ccCleanSession
+        then atomically $ do
+          unAckSentPublishPackets <- readTVar $ csUnAckSentPublishPackets state
+          forM_ unAckSentPublishPackets $ \p -> sendPacket state $ PUBLISH $ p { publishDup = True }
+          unAckSentPubrelPackets <- readTVar $ csUnAckSentPubrelPackets state
+          forM_ unAckSentPubrelPackets $ sendPacket state . PUBREL
+          unAckSentSubscribePackets <- readTVar $ csUnAckSentSubscribePackets state
+          forM_ unAckSentSubscribePackets $ sendPacket state . SUBSCRIBE
+          unAckSentUnsubscribePackets <- readTVar $ csUnAckSentUnsubscribePackets state
+          forM_ unAckSentUnsubscribePackets $ sendPacket state . UNSUBSCRIBE
+        else atomically $ do
+          modifyTVar (csUnAckSentPubrelPackets state)      $ const Seq.empty
+          modifyTVar (csUnAckSentPubrelPackets state)      $ const Seq.empty
+          modifyTVar (csUnAckSentSubscribePackets state)   $ const Seq.empty
+          modifyTVar (csUnAckSentUnsubscribePackets state) $ const Seq.empty
+
     handler (Just p) = do
       debugM "MQTT.Client.Core" $ "Received: " ++ show p
       case p of
