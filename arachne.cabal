@@ -3,6 +3,9 @@ version:             0.1.0.0
 homepage:            https://github.com/rasendubi/arachne
 bug-reports:         https://github.com/rasendubi/arachne/issues
 synopsis:            A set of tools for MQTT protocol
+description:
+    Arachne is a set of tools for working with MQTT protocol. It will include a
+    client, a broker, a gateway.
 license:             BSD3
 license-file:        LICENSE
 author:              Alexey Shmalko <rasen.dubi@gmail.com>
@@ -11,6 +14,8 @@ copyright:           (c) 2016 Alexey Shmalko
 category:            Network
 build-type:          Simple
 cabal-version:       >=1.10
+
+tested-with:         GHC == 7.10.3
 
 library
   exposed-modules:     Network.MQTT.Packet
@@ -28,7 +33,7 @@ library
                        Network.MQTT.SN.Encoder
                        Network.MQTT.Utils
                        Data.TopicFilterTrie
-  build-depends:       base >=4.8.1 && <4.10
+  build-depends:       base >=4.7.0 && <4.10
                      , attoparsec >=0.12.1 && <0.14
                      , attoparsec-binary >=0.2 && <0.3
                      , bytestring >=0.10.6 && <0.11
@@ -69,7 +74,7 @@ test-suite spec
                        Network.MQTT.ClientSpec
                        Network.MQTT.SN.ParserSpec
                        Network.MQTT.SN.EncoderSpec
-  build-depends:       base >=4.8.1 && <4.10
+  build-depends:       base >=4.7.0 && <4.10
                      , arachne
                      , attoparsec >=0.12.1 && <0.14
                      , bytestring >=0.10.6 && <0.11
