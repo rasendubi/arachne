@@ -17,19 +17,18 @@ module Network.MQTT.Gateway.Core
   ) where
 
 import           Control.Concurrent (forkIO, killThread)
-import           Control.Concurrent.STM (STM, TQueue, atomically, writeTQueue, newTQueueIO)
+import           Control.Concurrent.STM (newTQueue, newTVar, TVar, STM, TQueue, atomically, writeTQueue, modifyTVar, writeTVar, throwSTM, readTVar)
 import           Control.Exception (Exception, finally, throwIO, SomeException, try)
-
+import           Control.Monad (when)
+import           Data.Maybe (fromJust)
+import qualified Data.Sequence as Seq
 import qualified Network.MQTT.Packet as MQTT
-
 import           Network.MQTT.Utils
-
 import qualified STMContainers.Map as STM (Map)
 import qualified STMContainers.Map as STM.Map
-
+import qualified STMContainers.Set as TSet
 import           System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as S
-
 import           System.Log.Logger (debugM)
 
 -- | Internal gateway state.
@@ -40,7 +39,11 @@ data Gateway =
 
 data GatewayClient =
   GatewayClient
-  { gcSendQueue :: TQueue (Maybe MQTT.Packet)
+  { gcSendQueue                   :: TQueue (Maybe MQTT.Packet)
+  , gcUsedPacketIdentifiers       :: TSet.Set MQTT.PacketIdentifier
+  , gcUnAckSentPublishPackets     :: TVar (Seq.Seq MQTT.PublishPacket)
+  , gcUnAckSentPubrelPackets      :: TVar (Seq.Seq MQTT.PubrelPacket)
+  , gcUnAckReceivedPublishIds     :: TSet.Set MQTT.PacketIdentifier
   }
 
 data MQTTError = MQTTError
@@ -55,7 +58,12 @@ newGateway :: IO Gateway
 newGateway = Gateway <$> STM.Map.newIO
 
 newGatewayClient :: IO GatewayClient
-newGatewayClient = GatewayClient <$> newTQueueIO
+newGatewayClient = do
+  atomically $ GatewayClient <$> newTQueue
+                             <*> TSet.new
+                             <*> newTVar Seq.empty
+                             <*> newTVar Seq.empty
+                             <*> TSet.new
 
 -- | Run client handling on the given streams.
 --
@@ -114,6 +122,47 @@ packetHandler state (Just p) = do
     MQTT.UNSUBSCRIBE MQTT.UnsubscribePacket{..} -> atomically $ do
       sendPacket state $
         MQTT.UNSUBACK (MQTT.UnsubackPacket unsubscribePacketIdentifier)
+
+    MQTT.PUBACK pubackPacket -> atomically $ do
+      unAckSentPublishPackets <- readTVar $ gcUnAckSentPublishPackets state
+      let packetIdentifier = MQTT.pubackPacketIdentifier pubackPacket
+      let (xs, ys) = Seq.breakl (\pp -> fromJust (MQTT.publishPacketIdentifier pp) == packetIdentifier) unAckSentPublishPackets
+      let publishPacket = Seq.index ys 0
+      when (MQTT.messageQoS (MQTT.publishMessage publishPacket) /= MQTT.QoS1) $ throwSTM MQTTError
+      writeTVar (gcUnAckSentPublishPackets state) $ xs Seq.>< Seq.drop 1 ys
+      TSet.delete packetIdentifier $ gcUsedPacketIdentifiers state
+
+    MQTT.PUBREC pubrecPacket -> atomically $ do
+      unAckSentPublishPackets <- readTVar $ gcUnAckSentPublishPackets state
+      let packetIdentifier = MQTT.pubrecPacketIdentifier pubrecPacket
+      let (xs, ys) = Seq.breakl (\pp -> fromJust (MQTT.publishPacketIdentifier pp) == packetIdentifier) unAckSentPublishPackets
+      let publishPacket = Seq.index ys 0
+      when (MQTT.messageQoS (MQTT.publishMessage publishPacket) /= MQTT.QoS2) $ throwSTM MQTTError
+      let pubrelPacket = MQTT.PubrelPacket packetIdentifier
+      writeTVar (gcUnAckSentPublishPackets state) $ xs Seq.>< Seq.drop 1 ys
+      modifyTVar (gcUnAckSentPubrelPackets state) $ \pp -> pp Seq.|> pubrelPacket
+      sendPacket state $ MQTT.PUBREL pubrelPacket
+
+    MQTT.PUBCOMP pubcompPacket -> atomically $ do
+      unAckSentPubrelPackets <- readTVar $ gcUnAckSentPubrelPackets state
+      let packetIdentifier = MQTT.pubcompPacketIdentifier pubcompPacket
+      let pubrelPacket = Seq.index unAckSentPubrelPackets 0
+      when (MQTT.pubrelPacketIdentifier pubrelPacket /= packetIdentifier) $ throwSTM MQTTError
+      writeTVar (gcUnAckSentPubrelPackets state) $ Seq.drop 1 unAckSentPubrelPackets
+      TSet.delete packetIdentifier $ gcUsedPacketIdentifiers state
+
+    MQTT.PUBLISH publishPacket -> do
+      let qos = MQTT.messageQoS $ MQTT.publishMessage publishPacket
+      let packetIdentifier = fromJust $ MQTT.publishPacketIdentifier publishPacket
+      case qos of
+        MQTT.QoS0 -> undefined
+        MQTT.QoS1 -> atomically $ sendPacket state $ MQTT.PUBACK (MQTT.PubackPacket packetIdentifier)
+        MQTT.QoS2 -> atomically $ sendPacket state $ MQTT.PUBREC (MQTT.PubrecPacket packetIdentifier)
+
+    MQTT.PUBREL pubrelPacket -> atomically $ do
+      let packetIdentifier = MQTT.pubrelPacketIdentifier pubrelPacket
+      TSet.delete packetIdentifier $ gcUnAckReceivedPublishIds state
+      sendPacket state $ MQTT.PUBCOMP (MQTT.PubcompPacket packetIdentifier)
 
     _ -> return ()
 

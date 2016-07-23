@@ -202,9 +202,9 @@ receiver state result_os is = S.makeOutputStream handler >>= S.connect is
           let packetIdentifier = publishPacketIdentifier publishPacket
           case qos of
             QoS0 ->
-              writeTo result_os $ Just (PublishResult $ publishMessage publishPacket)
+              writeTo result_os $ PublishResult $ publishMessage publishPacket
             QoS1 -> do
-              writeTo result_os $ Just (PublishResult $ publishMessage publishPacket)
+              writeTo result_os $ PublishResult $ publishMessage publishPacket
               atomically $ sendPacket state $ PUBACK (PubackPacket $ fromJust packetIdentifier)
             QoS2 -> do
               let packetIdentifier' = fromJust packetIdentifier
@@ -216,7 +216,7 @@ receiver state result_os is = S.makeOutputStream handler >>= S.connect is
                 unless present $ TSet.insert packetIdentifier' s
                 return present
 
-              unless present $ writeTo result_os $ Just (PublishResult $ publishMessage publishPacket)
+              unless present $ writeTo result_os $ PublishResult $ publishMessage publishPacket
 
         PUBREL pubrelPacket -> atomically $ do
           let packetIdentifier = pubrelPacketIdentifier pubrelPacket
@@ -232,7 +232,7 @@ receiver state result_os is = S.makeOutputStream handler >>= S.connect is
             writeTVar (csUnAckSentSubscribePackets state) $ Seq.drop 1 unAckSentSubscribePackets
             TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
             return $ fst <$> subscribeTopicFiltersQoS subscribePacket
-          writeTo result_os $ Just (SubscribeResult $ zip topicFilters (subackResponses subackPacket))
+          writeTo result_os $ SubscribeResult $ zip topicFilters (subackResponses subackPacket)
 
         UNSUBACK unsubackPacket -> do
           unsubscribePacket <- atomically $ do
@@ -243,12 +243,9 @@ receiver state result_os is = S.makeOutputStream handler >>= S.connect is
             writeTVar (csUnAckSentUnsubscribePackets state) $ Seq.drop 1 unAckSentUnsubscribePackets
             TSet.delete packetIdentifier $ csUsedPacketIdentifiers state
             return unsubscribePacket
-          writeTo result_os $ Just (UnsubscribeResult $ unsubscribeTopicFilters unsubscribePacket)
+          writeTo result_os $ UnsubscribeResult $ unsubscribeTopicFilters unsubscribePacket
 
         _ -> return ()
-
-writeTo :: OutputStream a -> Maybe a -> IO ()
-writeTo = flip S.write
 
 sendConnect :: ClientState -> ConnectPacket -> IO ()
 sendConnect state packet = atomically $ sendPacket state $ CONNECT packet
@@ -269,3 +266,6 @@ sender queue os = do
   debugM "MQTT.Client.Core" "sender exit"
   where
     logPacket p = debugM "MQTT.Client.Core" $ "Sending: " ++ show p
+
+writeTo :: OutputStream a -> a -> IO ()
+writeTo os x = S.write (Just x) os
