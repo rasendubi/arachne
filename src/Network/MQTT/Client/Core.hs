@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module Network.MQTT.Client.Core
  ( runClient
+ , defaultClientConfig
 
  , UserCredentials(..)
  , ClientCommand(..)
@@ -16,6 +17,7 @@ import           Control.Monad ( unless, when )
 import           Control.Monad.Loops ( dropWhileM )
 import           Data.Maybe ( fromJust )
 import qualified Data.Sequence as Seq
+import qualified Data.Text as T
 import           Data.Word ( Word16 )
 import           Network.MQTT.Packet
 import           Network.MQTT.Utils
@@ -77,6 +79,16 @@ data MQTTError = MQTTError
 
 instance Exception MQTTError
 
+
+
+defaultClientConfig :: ClientConfig
+defaultClientConfig = ClientConfig
+                      { ccClientIdenfier  = ClientIdentifier $ T.pack "arachne-client" -- TODO put randomly generated string?
+                      , ccWillMsg         = Nothing
+                      , ccUserCredentials = Nothing
+                      , ccCleanSession    = True
+                      , ccKeepAlive       = 0
+                      }
 
 newClientState :: StdGen -> STM ClientState
 newClientState gen =

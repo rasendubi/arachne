@@ -16,34 +16,42 @@ module Network.MQTT.Gateway.Core
   , handleClient
   ) where
 
-import           Control.Concurrent (forkIO, killThread)
-import           Control.Concurrent.STM (newTQueue, newTVar, TVar, STM, TQueue, atomically, writeTQueue, modifyTVar, writeTVar, throwSTM, readTVar)
-import           Control.Exception (Exception, finally, throwIO, SomeException, try)
-import           Control.Monad (when)
-import           Data.Maybe (fromJust)
-import qualified Data.Sequence as Seq
-import qualified Network.MQTT.Packet as MQTT
+import           Control.Concurrent        (forkIO, killThread)
+import           Control.Concurrent.STM    (STM, TQueue, TVar, atomically,
+                                            modifyTVar, newTQueue, newTVar,
+                                            readTVar, throwSTM, writeTQueue,
+                                            writeTVar)
+import           Control.Exception         (Exception, SomeException, finally,
+                                            throwIO, try)
+import           Control.Monad             (unless, when)
+import           Data.Maybe                (fromJust)
+import qualified Data.Sequence             as Seq
+import           Network.MQTT.Client       as Client
+import           Network.MQTT.Client.Utils as ClientUtils
+import qualified Network.MQTT.Packet       as MQTT
 import           Network.MQTT.Utils
-import qualified STMContainers.Map as STM (Map)
-import qualified STMContainers.Map as STM.Map
-import qualified STMContainers.Set as TSet
-import           System.IO.Streams (InputStream, OutputStream)
-import qualified System.IO.Streams as S
-import           System.Log.Logger (debugM)
+import qualified STMContainers.Map         as STM (Map)
+import qualified STMContainers.Map         as STM.Map
+import qualified STMContainers.Set         as TSet
+import           System.IO.Streams         (InputStream, OutputStream)
+import qualified System.IO.Streams         as S
+import           System.Log.Logger         (debugM)
 
 -- | Internal gateway state.
 data Gateway =
   Gateway
-  { gClients :: STM.Map MQTT.ClientIdentifier GatewayClient
+  { gClients        :: STM.Map MQTT.ClientIdentifier GatewayClient
+  , gClientsResult  :: InputStream ClientResult
+  , gClientsCommand :: OutputStream ClientCommand
   }
 
 data GatewayClient =
   GatewayClient
-  { gcSendQueue                   :: TQueue (Maybe MQTT.Packet)
-  , gcUsedPacketIdentifiers       :: TSet.Set MQTT.PacketIdentifier
-  , gcUnAckSentPublishPackets     :: TVar (Seq.Seq MQTT.PublishPacket)
-  , gcUnAckSentPubrelPackets      :: TVar (Seq.Seq MQTT.PubrelPacket)
-  , gcUnAckReceivedPublishIds     :: TSet.Set MQTT.PacketIdentifier
+  { gcSendQueue               :: TQueue (Maybe MQTT.Packet)
+  , gcUsedPacketIdentifiers   :: TSet.Set MQTT.PacketIdentifier
+  , gcUnAckSentPublishPackets :: TVar (Seq.Seq MQTT.PublishPacket)
+  , gcUnAckSentPubrelPackets  :: TVar (Seq.Seq MQTT.PubrelPacket)
+  , gcUnAckReceivedPublishIds :: TSet.Set MQTT.PacketIdentifier
   }
 
 data MQTTError = MQTTError
@@ -54,8 +62,11 @@ instance Exception MQTTError
 -- | Creates a new Gateway.
 --
 -- Note that this doesn't start gateway operation.
-newGateway :: IO Gateway
-newGateway = Gateway <$> STM.Map.newIO
+newGateway :: InputStream ClientResult -> OutputStream ClientCommand -> IO Gateway
+newGateway client_result client_command =
+  Gateway <$> STM.Map.newIO
+          <*> pure client_result
+          <*> pure client_command
 
 newGatewayClient :: IO GatewayClient
 newGatewayClient = do
@@ -99,13 +110,13 @@ authenticator gw state is = do
         STM.Map.insert state connectClientIdentifier (gClients gw)
         case mx of
           Nothing -> return ()
-          Just x -> writeTQueue (gcSendQueue x) Nothing
+          Just x  -> writeTQueue (gcSendQueue x) Nothing
 
-      S.makeOutputStream (packetHandler state) >>= S.connect is
+      S.makeOutputStream (packetHandler gw state) >>= S.connect is
 
-packetHandler :: GatewayClient -> Maybe MQTT.Packet -> IO ()
-packetHandler _     Nothing  = return ()
-packetHandler state (Just p) = do
+packetHandler :: Gateway -> GatewayClient -> Maybe MQTT.Packet -> IO ()
+packetHandler _  _     Nothing  = return ()
+packetHandler gw state (Just p) = do
   debugM "MQTT.Gateway" $ "Received: " ++ show p
   case p of
     MQTT.CONNECT _ -> throwIO MQTTError
@@ -155,9 +166,15 @@ packetHandler state (Just p) = do
       let qos = MQTT.messageQoS $ MQTT.publishMessage publishPacket
       let packetIdentifier = fromJust $ MQTT.publishPacketIdentifier publishPacket
       case qos of
-        MQTT.QoS0 -> undefined
-        MQTT.QoS1 -> atomically $ sendPacket state $ MQTT.PUBACK (MQTT.PubackPacket packetIdentifier)
-        MQTT.QoS2 -> atomically $ sendPacket state $ MQTT.PUBREC (MQTT.PubrecPacket packetIdentifier)
+        MQTT.QoS0 -> return ()
+        MQTT.QoS1 -> atomically $ do
+          sendPacket state $ MQTT.PUBACK (MQTT.PubackPacket packetIdentifier)
+        MQTT.QoS2 -> atomically $ do
+          sendPacket state $ MQTT.PUBREC (MQTT.PubrecPacket packetIdentifier)
+          let s = gcUnAckReceivedPublishIds state
+          present <- TSet.lookup packetIdentifier s
+          unless present $ TSet.insert packetIdentifier s
+      ClientUtils.publish (gClientsCommand gw) (MQTT.publishMessage publishPacket)
 
     MQTT.PUBREL pubrelPacket -> atomically $ do
       let packetIdentifier = MQTT.pubrelPacketIdentifier pubrelPacket

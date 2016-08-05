@@ -6,16 +6,14 @@ where
 
 import           Network.MQTT.Client.Core
 import           Network.MQTT.Utils
-import           System.Log.Logger        ( debugM )
-
-import qualified System.IO.Streams as S
-import           System.IO.Streams        ( OutputStream )
-import           Network.Socket           ( AddrInfo, Socket
-                                          , SocketOption(KeepAlive)
-                                          , SocketType(Stream), addrAddress
-                                          , addrFamily, connect
-                                          , defaultProtocol, setSocketOption
-                                          , socket )
+import           Network.Socket           (AddrInfo, Socket,
+                                           SocketOption (KeepAlive),
+                                           SocketType (Stream), addrAddress,
+                                           addrFamily, connect, defaultProtocol,
+                                           setSocketOption, socket)
+import           System.IO.Streams        (OutputStream)
+import qualified System.IO.Streams        as S
+import           System.Log.Logger        (debugM)
 
 -- TODO(rasen): socket leak
 runClientWithSockets :: ClientConfig -> OutputStream ClientResult -> AddrInfo -> IO (Socket, OutputStream ClientCommand)

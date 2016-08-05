@@ -29,7 +29,7 @@ defaultMQTTAddr = AddrInfo{ addrFlags = []
                           , addrFamily = AF_INET
                           , addrSocketType = Stream
                           , addrProtocol = 6 -- TCP
-                          , addrAddress = SockAddrInet (fromInteger 1883) 0
+                          , addrAddress = SockAddrInet 1883 0
                           , addrCanonName = Nothing
                           }
 
