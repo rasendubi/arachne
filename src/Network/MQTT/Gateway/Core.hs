@@ -46,7 +46,7 @@ import           System.Random             (newStdGen, randomRs)
 data Gateway =
   Gateway
   { gClients        :: STM.Map MQTT.ClientIdentifier GatewayClient
-  , gClientsIdTrie  :: TVar (TT.TopicFilterTrie MQTT.ClientIdentifier)
+  , gClientsIdTrie  :: TVar (TT.TopicFilterTrie GatewayClient)
   , gClientsCommand :: OutputStream ClientCommand
   }
 
@@ -89,27 +89,19 @@ genPacketIdentifier state = do
 
 clientResultHandler :: Gateway -> Maybe ClientResult -> IO ()
 clientResultHandler gw Nothing = return ()
-clientResultHandler gw (Just (Client.PublishResult message)) = do
-  clientsIdTrie <- atomically $ readTVar (gClientsIdTrie gw)
-  forM_ (TT.matches (MQTT.messageTopic message) clientsIdTrie) $ \clientId -> do
-      atomically $ STM.Map.lookup clientId (gClients gw) >>= \gClient -> do
-        case gClient of
-          Just state -> do
-            if MQTT.messageQoS message == MQTT.QoS0
-              then
-                sendPacket state $ MQTT.PUBLISH
-                  MQTT.PublishPacket { MQTT.publishDup              = False
-                                     , MQTT.publishMessage          = message
-                                     , MQTT.publishPacketIdentifier = Nothing
-                                     }
-              else do
-                packetIdentifier <- Just <$> genPacketIdentifier state
-                sendPacket state $ MQTT.PUBLISH
-                  MQTT.PublishPacket { MQTT.publishDup              = False
-                                     , MQTT.publishMessage          = message
-                                     , MQTT.publishPacketIdentifier = packetIdentifier
-                                     }
-          Nothing    -> return ()
+clientResultHandler gw (Just (Client.PublishResult message)) = atomically $ do
+  readTVar (gClientsIdTrie gw) >>= \clientsIdTrie -> do
+    forM_ (TT.matches (MQTT.messageTopic message) clientsIdTrie) $ \state -> do
+        packetIdentifier <- getPublishPacketIdentifier (MQTT.messageQoS message) state
+        sendPacket state $ MQTT.PUBLISH
+          MQTT.PublishPacket { MQTT.publishDup              = False
+                             , MQTT.publishMessage          = message
+                             , MQTT.publishPacketIdentifier = packetIdentifier
+                             }
+    where
+      getPublishPacketIdentifier MQTT.QoS0 _     = pure Nothing
+      getPublishPacketIdentifier _         state = Just <$> genPacketIdentifier state
+
 clientResultHandler gw (Just (Client.SubscribeResult   subscribeResult))   = undefined
 clientResultHandler gw (Just (Client.UnsubscribeResult unsubscribeResult)) = undefined
 
