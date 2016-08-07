@@ -19,13 +19,16 @@ module Network.MQTT.Gateway.Core
 import           Control.Concurrent        (forkIO, killThread)
 import           Control.Concurrent.STM    (STM, TQueue, TVar, atomically,
                                             modifyTVar, newTQueue, newTVar,
-                                            readTVar, throwSTM, writeTQueue,
-                                            writeTVar)
+                                            newTVarIO, readTVar, throwSTM,
+                                            writeTQueue, writeTVar)
 import           Control.Exception         (Exception, SomeException, finally,
                                             throwIO, try)
-import           Control.Monad             (unless, when)
+import           Control.Monad             (unless, when, forM_)
+import           Control.Monad.Loops       (dropWhileM)
 import           Data.Maybe                (fromJust)
 import qualified Data.Sequence             as Seq
+import qualified Data.TopicFilterTrie      as TT
+import           Data.Word                 (Word16)
 import           Network.MQTT.Client       as Client
 import           Network.MQTT.Client.Utils as ClientUtils
 import qualified Network.MQTT.Packet       as MQTT
@@ -36,12 +39,14 @@ import qualified STMContainers.Set         as TSet
 import           System.IO.Streams         (InputStream, OutputStream)
 import qualified System.IO.Streams         as S
 import           System.Log.Logger         (debugM)
+import           System.Random             (newStdGen, randomRs)
+
 
 -- | Internal gateway state.
 data Gateway =
   Gateway
   { gClients        :: STM.Map MQTT.ClientIdentifier GatewayClient
-  , gClientsResult  :: InputStream ClientResult
+  , gClientsIdTrie  :: TVar (TT.TopicFilterTrie MQTT.ClientIdentifier)
   , gClientsCommand :: OutputStream ClientCommand
   }
 
@@ -49,6 +54,7 @@ data GatewayClient =
   GatewayClient
   { gcSendQueue               :: TQueue (Maybe MQTT.Packet)
   , gcUsedPacketIdentifiers   :: TSet.Set MQTT.PacketIdentifier
+  , gcRandomVals              :: TVar [Word16]
   , gcUnAckSentPublishPackets :: TVar (Seq.Seq MQTT.PublishPacket)
   , gcUnAckSentPubrelPackets  :: TVar (Seq.Seq MQTT.PubrelPacket)
   , gcUnAckReceivedPublishIds :: TSet.Set MQTT.PacketIdentifier
@@ -61,17 +67,58 @@ instance Exception MQTTError
 
 -- | Creates a new Gateway.
 --
--- Note that this doesn't start gateway operation.
-newGateway :: InputStream ClientResult -> OutputStream ClientCommand -> IO Gateway
-newGateway client_result client_command =
-  Gateway <$> STM.Map.newIO
-          <*> pure client_result
-          <*> pure client_command
+newGateway :: (InputStream ClientResult, OutputStream ClientCommand) -> IO Gateway
+newGateway (client_result, client_command) = do
+  gw <- Gateway <$> STM.Map.newIO
+                <*> newTVarIO TT.empty
+                <*> pure client_command
+
+  S.makeOutputStream (clientResultHandler gw) >>= S.connect client_result
+
+  return gw
+
+genPacketIdentifier :: GatewayClient -> STM MQTT.PacketIdentifier
+genPacketIdentifier state = do
+  randomVals <- readTVar $ gcRandomVals state
+  (identifier : restIds) <- dropWhileM
+    (\i -> TSet.lookup (MQTT.PacketIdentifier i) $ gcUsedPacketIdentifiers state) randomVals
+  writeTVar (gcRandomVals state) restIds
+  let packetIdentifier = MQTT.PacketIdentifier identifier
+  TSet.insert packetIdentifier $ gcUsedPacketIdentifiers state
+  return packetIdentifier
+
+clientResultHandler :: Gateway -> Maybe ClientResult -> IO ()
+clientResultHandler gw Nothing = return ()
+clientResultHandler gw (Just (Client.PublishResult message)) = do
+  clientsIdTrie <- atomically $ readTVar (gClientsIdTrie gw)
+  forM_ (TT.matches (MQTT.messageTopic message) clientsIdTrie) $ \clientId -> do
+      atomically $ STM.Map.lookup clientId (gClients gw) >>= \gClient -> do
+        case gClient of
+          Just state -> do
+            if MQTT.messageQoS message == MQTT.QoS0
+              then
+                sendPacket state $ MQTT.PUBLISH
+                  MQTT.PublishPacket { MQTT.publishDup              = False
+                                     , MQTT.publishMessage          = message
+                                     , MQTT.publishPacketIdentifier = Nothing
+                                     }
+              else do
+                packetIdentifier <- Just <$> genPacketIdentifier state
+                sendPacket state $ MQTT.PUBLISH
+                  MQTT.PublishPacket { MQTT.publishDup              = False
+                                     , MQTT.publishMessage          = message
+                                     , MQTT.publishPacketIdentifier = packetIdentifier
+                                     }
+          Nothing    -> return ()
+clientResultHandler gw (Just (Client.SubscribeResult   subscribeResult))   = undefined
+clientResultHandler gw (Just (Client.UnsubscribeResult unsubscribeResult)) = undefined
 
 newGatewayClient :: IO GatewayClient
 newGatewayClient = do
+  gen <- newStdGen
   atomically $ GatewayClient <$> newTQueue
                              <*> TSet.new
+                             <*> newTVar (randomRs (0, 65535) gen)
                              <*> newTVar Seq.empty
                              <*> newTVar Seq.empty
                              <*> TSet.new

@@ -1,29 +1,27 @@
 {-# LANGUAGE RecordWildCards #-}
 module Network.MQTT.ClientSpec (spec) where
 
-import           Control.Concurrent ( threadDelay )
-import           Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, isEmptyMVar )
-import qualified Data.ByteString as BS
-import           Data.Maybe ( isJust, fromJust )
-import qualified Data.Text as T
-import           Network.MQTT.Client ( runClient
-
-                                     , UserCredentials(..)
-                                     , ClientCommand(..)
-                                     , ClientConfig(..)
-                                     , ClientResult(..))
+import           Control.Concurrent           (threadDelay)
+import           Control.Concurrent.MVar      (isEmptyMVar, newEmptyMVar,
+                                               putMVar, takeMVar)
+import           Control.Monad                (forM_)
+import qualified Data.ByteString              as BS
+import           Data.Maybe                   (fromJust, isJust)
+import qualified Data.Set                     as Set
+import qualified Data.Text                    as T
+import           Network.MQTT.Client          (ClientCommand (..),
+                                               ClientConfig (..),
+                                               ClientResult (..),
+                                               UserCredentials (..), runClient)
 import           Network.MQTT.Packet
-import           System.IO.Streams ( InputStream, OutputStream )
-import qualified System.IO.Streams as S
+import           System.IO.Streams            (InputStream, OutputStream)
+import qualified System.IO.Streams            as S
 import qualified System.IO.Streams.Concurrent as S
-import           System.Log ( Priority(DEBUG) )
-import           System.Log.Logger            ( rootLoggerName
-                                              , setLevel
-                                              , updateGlobalLogger )
-import           Control.Monad ( forM_ )
-import qualified Data.Set as Set
+import           System.Log                   (Priority (DEBUG))
+import           System.Log.Logger            (rootLoggerName, setLevel,
+                                               updateGlobalLogger)
+import           System.Timeout               (timeout)
 import           Test.Hspec
-import           System.Timeout (timeout)
 
 debugTests :: IO ()
 debugTests = updateGlobalLogger rootLoggerName (setLevel DEBUG)
@@ -58,7 +56,7 @@ disconnectClient :: OutputStream Packet -> IO ()
 disconnectClient = S.write Nothing
 
 defaultConfig = ClientConfig
-                { ccClientIdenfier   = ClientIdentifier $ T.pack "arachne-test"
+                { ccClientIdentifier = ClientIdentifier $ T.pack "arachne-test"
                 , ccWillMsg          = Nothing
                 , ccUserCredentials  = Nothing
                 , ccCleanSession     = True

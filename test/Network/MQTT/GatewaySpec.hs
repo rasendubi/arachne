@@ -1,28 +1,28 @@
 module Network.MQTT.GatewaySpec (spec, debugTests) where
 
-import           Control.Concurrent (forkIO, killThread)
-import           Control.Exception (bracket)
-
-import           Control.Monad (forM_)
-import           Control.Monad.Cont (liftIO)
-import           Control.Monad.Reader (ReaderT, asks, runReaderT)
-
-import qualified Data.Text as T
-
-import qualified Network.MQTT.Gateway as Gateway
+import           Control.Concurrent           (forkIO, killThread)
+import           Control.Exception            (bracket)
+import           Control.Monad                (forM_)
+import           Control.Monad.Cont           (liftIO)
+import           Control.Monad.Reader         (ReaderT, asks, runReaderT)
+import qualified Data.Text                    as T
+import qualified Network.MQTT.Gateway         as Gateway
 import           Network.MQTT.Packet
 import           Network.MQTT.Utils
-
-import           Network.Socket (AddrInfo, addrAddress, addrFamily, connect, socket, addrProtocol, addrSocketType, SockAddr(SockAddrInet), close, Socket, aNY_PORT, bind, listen, socketPort)
-
-import           System.IO.Streams (InputStream, OutputStream)
-import qualified System.IO.Streams as S
-
-import           System.Log (Priority(DEBUG))
-import           System.Log.Logger (debugM, rootLoggerName, setLevel, updateGlobalLogger)
-
-import           System.Timeout (timeout)
-
+import           Network.Socket               (AddrInfo,
+                                               SockAddr (SockAddrInet), Socket,
+                                               aNY_PORT, addrAddress,
+                                               addrFamily, addrProtocol,
+                                               addrSocketType, bind, close,
+                                               connect, listen, socket,
+                                               socketPort)
+import           System.IO.Streams            (InputStream, OutputStream)
+import qualified System.IO.Streams            as S
+import qualified System.IO.Streams.Concurrent as S
+import           System.Log                   (Priority (DEBUG))
+import           System.Log.Logger            (debugM, rootLoggerName, setLevel,
+                                               updateGlobalLogger)
+import           System.Timeout               (timeout)
 import           Test.Hspec
 
 debugTests :: IO ()
@@ -253,8 +253,8 @@ clientConnect clientId = do
 
 data ClientConnection =
   ClientConnection
-  { ccSocket :: Socket
-  , ccInputStream :: InputStream Packet
+  { ccSocket       :: Socket
+  , ccInputStream  :: InputStream Packet
   , ccOutputStream :: OutputStream Packet
   }
 
@@ -262,7 +262,9 @@ type CCMonad a = ReaderT ClientConnection IO a
 
 withServer :: (AddrInfo -> IO a) -> IO a
 withServer x = do
-  gw <- Gateway.newGateway
+  client_result  <- S.nullInput
+  client_command <- S.nullOutput
+  gw <- Gateway.newGateway (client_result, client_command)
   bracket (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
     bind sock (addrAddress addr)
     listen sock 5

@@ -9,23 +9,26 @@ module Network.MQTT.Client.Core
  , ClientResult(..))
 where
 
-import           Control.Concurrent ( forkFinally, ThreadId, killThread )
-import           Control.Concurrent.MVar ( MVar, newEmptyMVar, putMVar )
-import           Control.Concurrent.STM ( STM, TQueue, TVar, newTVar, newTQueue, atomically, writeTQueue, writeTVar, modifyTVar, readTVar, throwSTM )
-import           Control.Exception ( Exception, throwIO )
-import           Control.Monad ( unless, when )
-import           Control.Monad.Loops ( dropWhileM )
-import           Data.Maybe ( fromJust )
-import qualified Data.Sequence as Seq
-import qualified Data.Text as T
-import           Data.Word ( Word16 )
+import           Control.Concurrent      (ThreadId, forkFinally, killThread)
+import           Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar)
+import           Control.Concurrent.STM  (STM, TQueue, TVar, atomically,
+                                          modifyTVar, newTQueue, newTVar,
+                                          readTVar, throwSTM, writeTQueue,
+                                          writeTVar)
+import           Control.Exception       (Exception, throwIO)
+import           Control.Monad           (unless, when)
+import           Control.Monad.Loops     (dropWhileM)
+import           Data.Maybe              (fromJust)
+import qualified Data.Sequence           as Seq
+import qualified Data.Text               as T
+import           Data.Word               (Word16)
 import           Network.MQTT.Packet
 import           Network.MQTT.Utils
-import qualified STMContainers.Set as TSet
-import           System.IO.Streams ( InputStream, OutputStream )
-import qualified System.IO.Streams as S
-import           System.Log.Logger ( debugM )
-import           System.Random ( randomRs, newStdGen, StdGen )
+import qualified STMContainers.Set       as TSet
+import           System.IO.Streams       (InputStream, OutputStream)
+import qualified System.IO.Streams       as S
+import           System.Log.Logger       (debugM)
+import           System.Random           (StdGen, newStdGen, randomRs)
 
 
 data UserCredentials
@@ -36,7 +39,7 @@ data UserCredentials
 
 data ClientConfig
   = ClientConfig
-    { ccClientIdenfier   :: !ClientIdentifier
+    { ccClientIdentifier :: !ClientIdentifier
     , ccWillMsg          :: !(Maybe Message)
     , ccUserCredentials  :: !(Maybe UserCredentials)
     , ccCleanSession     :: !Bool
@@ -80,14 +83,14 @@ data MQTTError = MQTTError
 instance Exception MQTTError
 
 
-
 defaultClientConfig :: ClientConfig
 defaultClientConfig = ClientConfig
-                      { ccClientIdenfier  = ClientIdentifier $ T.pack "arachne-client" -- TODO put randomly generated string?
-                      , ccWillMsg         = Nothing
-                      , ccUserCredentials = Nothing
-                      , ccCleanSession    = True
-                      , ccKeepAlive       = 0
+                      -- TODO generate random string for client identifier?
+                      { ccClientIdentifier = ClientIdentifier $ T.pack "arachne-client"
+                      , ccWillMsg          = Nothing
+                      , ccUserCredentials  = Nothing
+                      , ccCleanSession     = True
+                      , ccKeepAlive        = 0
                       }
 
 newClientState :: StdGen -> STM ClientState
@@ -118,7 +121,7 @@ runClient ClientConfig{..} result_os is os = do
 
   sendConnect state
     ConnectPacket
-    { connectClientIdentifier = ccClientIdenfier
+    { connectClientIdentifier = ccClientIdentifier
     , connectProtocolLevel    = 0x04
     , connectWillMsg          = ccWillMsg
     , connectUserName         = fmap userName ccUserCredentials
@@ -135,6 +138,7 @@ sendPacket :: ClientState -> Packet -> STM ()
 sendPacket state p = writeTQueue (csSendQueue state) $ Just p
 
 authenticator :: ClientState -> OutputStream ClientResult -> InputStream Packet -> IO ()
+
 authenticator state result_os is = do
   -- Possible pattern-match failure is intended
   Just (CONNACK ConnackPacket{..}) <- S.read is
