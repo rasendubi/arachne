@@ -42,7 +42,6 @@ import Data.Hashable (Hashable)
 import Data.Text (Text)
 import Data.Word (Word16, Word8)
 import GHC.Generics (Generic)
-import Data.Hashable (Hashable)
 
 -- | A client identifier.
 --

@@ -3,10 +3,8 @@ module Main (main) where
 import           Network                      (withSocketsDo)
 import           Network.MQTT.Client          as Client
 import qualified Network.MQTT.Gateway         as Gateway
-import           Network.Socket               (SockAddr (SockAddrInet), Socket,
-                                               addrAddress)
 import           Network.Socket               (getAddrInfo)
-import           Network.URI                  (URI, parseURI, uriAuthority,
+import           Network.URI                  (parseURI, uriAuthority,
                                                uriPort, uriRegName)
 import           System.Environment           (getArgs)
 import           System.IO.Streams            (InputStream, OutputStream)
