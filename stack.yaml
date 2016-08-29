@@ -2,9 +2,7 @@ resolver: lts-6.1
 
 nix:
   enable: true
-  packages:
-    - zlib
-    - haskellPackages.hscolour
+  shell-file: shell.nix
 
 packages:
 - '.'

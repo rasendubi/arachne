@@ -57,7 +57,7 @@ encodeConnectVariableHeader ConnectPacket{..} = mconcat
               [ toBit (isJust connectUserName)                 `shiftL` 7
               , toBit (isJust connectPassword)                 `shiftL` 6
               , maybe 0 (toBit . messageRetain) connectWillMsg `shiftL` 5
-              , maybe 0 (fromQoS . messageQoS) connectWillMsg  `shiftL` 3
+              , maybe 0 (toWord8 . messageQoS) connectWillMsg  `shiftL` 3
               , toBit (isJust connectWillMsg)                  `shiftL` 2
               , toBit connectCleanSession                      `shiftL` 1
               ]
@@ -100,10 +100,10 @@ encodeUnsubscribePayload :: UnsubscribePacket -> Builder
 encodeUnsubscribePayload = foldMap (encodeText . unTopicFilter) . unsubscribeTopicFilters
 
 encodeSubackPayload :: SubackPacket -> Builder
-encodeSubackPayload = foldMap (word8 . maybe 0x80 fromQoS) . subackResponses
+encodeSubackPayload = foldMap (word8 . maybe 0x80 toWord8) . subackResponses
 
 encodeSubscribePayload :: SubscribePacket -> Builder
-encodeSubscribePayload = foldMap (\(topicFilter, qos) -> encodeText (unTopicFilter topicFilter) <> word8 (fromQoS qos))
+encodeSubscribePayload = foldMap (\(topicFilter, qos) -> encodeText (unTopicFilter topicFilter) <> word8 (toWord8 qos))
                          . subscribeTopicFiltersQoS
 
 encodePublishPayload :: PublishPacket -> Builder
@@ -152,7 +152,7 @@ flagBits (UNSUBSCRIBE _) = 2
 flagBits (PUBLISH publishPacket) =
   let message = publishMessage publishPacket
   in toBit (publishDup publishPacket) `shiftL` 3
-     .|. fromQoS (messageQoS message) `shiftL` 1
+     .|. toWord8 (messageQoS message) `shiftL` 1
      .|. toBit (messageRetain message)
 flagBits _               = 0
 
@@ -160,7 +160,5 @@ toBit :: (Num a) => Bool -> a
 toBit False = 0
 toBit True  = 1
 
-fromQoS :: (Num a) => QoS -> a
-fromQoS QoS0 = 0
-fromQoS QoS1 = 1
-fromQoS QoS2 = 2
+toWord8 :: Enum a => a -> Word8
+toWord8 = fromIntegral . fromEnum

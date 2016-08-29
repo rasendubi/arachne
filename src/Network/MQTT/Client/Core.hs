@@ -130,7 +130,7 @@ runClient ClientConfig{..} result_os is os = do
     , connectKeepAlive        = ccKeepAlive
     }
 
-  S.contramapM_ logPacket =<< S.makeOutputStream (commandHandler state threads)
+  S.lockingOutputStream =<< S.contramapM_ logPacket =<< S.makeOutputStream (commandHandler state threads)
     where
       logPacket p = debugM "MQTT.Client.Core" $ "Client command: " ++ show p
 

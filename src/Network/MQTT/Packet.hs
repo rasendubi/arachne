@@ -97,7 +97,7 @@ newtype TopicName = TopicName { unTopicName :: Text }
 -- Both wildcards occupy entire level of the filter. (i.e.,
 -- \"hello/wor+ld" is not a valid topic filter.)
 newtype TopicFilter = TopicFilter { unTopicFilter :: Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Hashable)
 
 -- | Quality of Service level.
 --
@@ -123,6 +123,9 @@ instance Enum QoS where
   fromEnum QoS0 = 0
   fromEnum QoS1 = 1
   fromEnum QoS2 = 2
+
+instance Ord QoS where
+  qos1 `compare` qos2 = fromEnum qos1 `compare` fromEnum qos2
 
 -- | Application message.
 --
