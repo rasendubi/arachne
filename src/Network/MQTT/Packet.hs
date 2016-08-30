@@ -1,5 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Network.MQTT.Packet
   (
   -- * User facing types
@@ -97,7 +97,7 @@ newtype TopicName = TopicName { unTopicName :: Text }
 -- Both wildcards occupy entire level of the filter. (i.e.,
 -- \"hello/wor+ld" is not a valid topic filter.)
 newtype TopicFilter = TopicFilter { unTopicFilter :: Text }
-  deriving (Eq, Show, Hashable)
+  deriving (Eq, Show, Generic, Hashable)
 
 -- | Quality of Service level.
 --
@@ -112,7 +112,7 @@ data QoS
   = QoS0 -- ^ QoS 0 - At most once delivery
   | QoS1 -- ^ QoS 1 - At least once delivery
   | QoS2 -- ^ QoS 2 - Exactly once delivery
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Show, Generic, Hashable)
 
 instance Enum QoS where
   toEnum 0 = QoS0
@@ -230,7 +230,7 @@ data SubscribePacket
   = SubscribePacket
     { subscribePacketIdentifier :: !PacketIdentifier
     , subscribeTopicFiltersQoS  :: [(TopicFilter, QoS)]
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Generic, Hashable)
 
 data SubackPacket
   = SubackPacket

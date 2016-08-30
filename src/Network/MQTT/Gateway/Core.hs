@@ -47,11 +47,22 @@ import           System.Random             (newStdGen, randomRs)
 
 -- | Internal gateway state.
 data Gateway =
-  Gateway
-  { gClients                :: STM.Map MQTT.ClientIdentifier GatewayClient
-  , gSubscriptions          :: STM.Map MQTT.TopicFilter MQTT.QoS
-  , gClientSubscriptions    :: TVar (TT.TopicFilterTrie (Map.Map GatewayClient MQTT.QoS))
-  , gClientCommands         :: OutputStream ClientCommand
+  Gateway {
+  -- | Represents Gateway Clients which were created for handling Alien Clients.
+    gClients               :: STM.Map MQTT.ClientIdentifier GatewayClient
+
+  -- | Represents subscriptions which Gateway has (which were acknowledged by the main Broker).
+  , gSubscriptions         :: STM.Map MQTT.TopicFilter MQTT.QoS
+
+  -- | Represents awaiting for acknowledgment Subscribe packets which were received from Alien Clients.
+  , gUnAckSubscribePackets :: STM.Map MQTT.SubscribePacket GatewayClient
+
+  -- | Represents subscriptions which each Gateway Client has (contains specific level of quality of service).
+  , gClientSubscriptions   :: TVar (TT.TopicFilterTrie (Map.Map GatewayClient MQTT.QoS))
+
+  -- | Represents communication channel between Gateway and Client (which sends data to the main Broker).
+  -- Use it for sending data to the Client.
+  , gClientCommands        :: OutputStream ClientCommand
   }
 
 data GatewayClient =
@@ -81,6 +92,7 @@ instance Ord GatewayClient where
 newGateway :: (InputStream ClientResult, OutputStream ClientCommand) -> IO Gateway
 newGateway (client_result, client_command) = do
   gw <- Gateway <$> STM.Map.newIO
+                <*> STM.Map.newIO
                 <*> STM.Map.newIO
                 <*> newTVarIO TT.empty
                 <*> pure client_command
@@ -117,10 +129,12 @@ clientResultHandler gw (Just (Client.PublishResult message)) = atomically $ do
 
 clientResultHandler gw (Just (Client.SubscribeResult subscribeResult))   = atomically $ do
   undefined
-  -- TODO Start from here:
-  -- it's better to have separate map: subscribePakcet -> gatewayClient -- add map?
-  -- adjust packetHandler
-  -- continue clientResultHandler
+  -- TODO read about subscribe flow in spec; ask rasen
+  -- receive subscribe result
+  -- check if we have unacknowledged subscribe packets with such topic filter
+  -- if yes -- remove entity; send suback; put to client subscription
+  -- if no -- check gateway subscriptions:
+  -- if yes -- update subscription; update trie
 
   -- forM_ subscribeResult $ \(topicFilter, qos) -> do
   --   gSubscriptions gw >>= \subscriptions -> do
@@ -189,7 +203,7 @@ packetHandler gw state (Just p) = do
     MQTT.PINGREQ _ -> atomically $ do
       sendPacket state (MQTT.PINGRESP MQTT.PingrespPacket)
 
-    MQTT.SUBSCRIBE MQTT.SubscribePacket{..} -> do
+    MQTT.SUBSCRIBE subscribe@MQTT.SubscribePacket{..} -> do
       forM_ subscribeTopicFiltersQoS $ \(topicFilter, qos) -> do
         present <- atomically $ do
           gwSubscription <- STM.Map.lookup topicFilter (gSubscriptions gw)
@@ -206,10 +220,10 @@ packetHandler gw state (Just p) = do
                         \tt -> TT.insert topicFilter (Map.singleton state qos) tt
                   return True
                 else do
-                  STM.Map.insert qos topicFilter (gSubscriptions gw)
+                  STM.Map.insert state subscribe (gUnAckSubscribePackets gw)
                   return False
             Nothing -> do
-              STM.Map.insert qos topicFilter (gSubscriptions gw)
+              STM.Map.insert state subscribe (gUnAckSubscribePackets gw)
               return False
 
         unless present $ ClientUtils.subscribe (gClientCommands gw) [(topicFilter, qos)]
