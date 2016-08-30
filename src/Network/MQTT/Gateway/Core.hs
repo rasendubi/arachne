@@ -55,7 +55,7 @@ data Gateway =
   , gSubscriptions         :: STM.Map MQTT.TopicFilter MQTT.QoS
 
   -- | Represents awaiting for acknowledgment Subscribe packets which were received from Alien Clients.
-  , gUnAckSubscribePackets :: STM.Map MQTT.SubscribePacket GatewayClient
+  , gUnAckSubscribePackets :: TVar (TT.TopicFilterTrie (Map.Map MQTT.SubscribePacket GatewayClient))
 
   -- | Represents subscriptions which each Gateway Client has (contains specific level of quality of service).
   , gClientSubscriptions   :: TVar (TT.TopicFilterTrie (Map.Map GatewayClient MQTT.QoS))
@@ -93,7 +93,7 @@ newGateway :: (InputStream ClientResult, OutputStream ClientCommand) -> IO Gatew
 newGateway (client_result, client_command) = do
   gw <- Gateway <$> STM.Map.newIO
                 <*> STM.Map.newIO
-                <*> STM.Map.newIO
+                <*> newTVarIO TT.empty
                 <*> newTVarIO TT.empty
                 <*> pure client_command
 
@@ -127,19 +127,24 @@ clientResultHandler gw (Just (Client.PublishResult message)) = atomically $ do
       getPublishPacketIdentifier MQTT.QoS0 _     = pure Nothing
       getPublishPacketIdentifier _         state = Just <$> genPacketIdentifier state
 
-clientResultHandler gw (Just (Client.SubscribeResult subscribeResult))   = atomically $ do
+clientResultHandler gw (Just (Client.SubscribeResult subscribeResult)) = atomically $ do
   undefined
-  -- TODO read about subscribe flow in spec; ask rasen
   -- receive subscribe result
   -- check if we have unacknowledged subscribe packets with such topic filter
   -- if yes -- remove entity; send suback; put to client subscription
   -- if no -- check gateway subscriptions:
   -- if yes -- update subscription; update trie
 
+  -- , gUnAckSubscribePackets :: STM.Map MQTT.SubscribePacket GatewayClient
+  -- SubscribeResult [(TopicFilter, Maybe QoS)]
+  -- , gUnAckSubscribePackets :: TVar (TT.TopicFilterTrie (Map.Map SubscribePacket GatewayClient))
+
   -- forM_ subscribeResult $ \(topicFilter, qos) -> do
-  --   gSubscriptions gw >>= \subscriptions -> do
-  --     case STM.Map.lookup topicFilter subscriptions of
-  --       Just
+  --   readTVar (gUnAckSubscribePackets gw) >>= \unAckSubscribePackets -> do
+  --     forM_ (TT.matches topicFilter unAckSubscribePackets) $ \subscribePacketsClient -> do
+  --       forM_ (Map.toList subscribePacketsClient) $ \(subscribePacket, state) -> do
+  --         undefined
+
 
 clientResultHandler gw (Just (Client.UnsubscribeResult unsubscribeResult)) = undefined
 
@@ -214,12 +219,13 @@ packetHandler gw state (Just p) = do
                   sendPacket state $ MQTT.SUBACK (MQTT.SubackPacket subscribePacketIdentifier [Just qos])
                   readTVar (gClientSubscriptions gw) >>= \clientsSubscriptions-> do
                     case (TT.lookup topicFilter clientsSubscriptions) of
-                      Just clientsSubscription -> modifyTVar (gClientSubscriptions gw) $ do
-                        \tt -> TT.insert topicFilter (Map.insert state qos clientsSubscription) tt
-                      Nothing -> modifyTVar (gClientSubscriptions gw) $ do
-                        \tt -> TT.insert topicFilter (Map.singleton state qos) tt
+                      Just clientsSubscription -> writeTVar (gClientSubscriptions gw) $ do
+                        TT.insert topicFilter (Map.insert state qos clientsSubscription) clientsSubscriptions
+                      Nothing -> writeTVar (gClientSubscriptions gw) $ do
+                        TT.insert topicFilter (Map.singleton state qos) clientsSubscriptions
                   return True
                 else do
+                  -- TODO Start from here. Is topic filter trie good here? If yes, how to abstract lookup-insert operation...
                   STM.Map.insert state subscribe (gUnAckSubscribePackets gw)
                   return False
             Nothing -> do
