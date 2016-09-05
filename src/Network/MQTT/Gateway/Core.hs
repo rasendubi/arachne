@@ -13,56 +13,63 @@
 module Network.MQTT.Gateway.Core
   ( Gateway
   , newGateway
-  , handleClient
+  , handleAlienClient
   ) where
 
-import           Control.Concurrent        (forkIO, killThread)
-import           Control.Concurrent.STM    (STM, TQueue, TVar, atomically,
-                                            modifyTVar, newTQueue, newTVar,
-                                            newTVarIO, readTVar, throwSTM,
-                                            writeTQueue, writeTVar)
-import           Control.Exception         (Exception, SomeException, finally,
-                                            throwIO, try)
-import           Control.Monad             (forM_, unless, when)
-import           Control.Monad.Loops       (dropWhileM)
-import qualified Data.Map.Strict           as Map
-import           Data.Maybe                (fromJust)
-import qualified Data.Sequence             as Seq
-import qualified Data.Text                 as T
-import qualified Data.TopicFilterTrie      as TT
-import           Data.Word                 (Word16)
-import           Network.MQTT.Client       as Client
-import           Network.MQTT.Client.Utils as ClientUtils
-import qualified Network.MQTT.Packet       as MQTT
+
+import           Control.Concurrent      (ThreadId, forkFinally, forkIO, killThread)
+import           Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar)
+import           Control.Concurrent.STM  (STM, TQueue, TVar, atomically,
+                                          modifyTVar, newTQueue, newTVar,
+                                          newTVarIO, readTVar, throwSTM,
+                                          writeTQueue, writeTVar)
+import           Control.Exception       (Exception, SomeException, finally,
+                                          throwIO, try)
+import           Control.Monad           (unless, when)
+import           Control.Monad.Loops     (dropWhileM)
+import qualified Data.Map.Strict         as Map
+import           Data.Maybe              (fromJust)
+import qualified Data.Sequence           as Seq
+import qualified Data.Text               as T
+import qualified Data.TopicFilterTrie    as TT
+import           Data.Word               (Word16)
+import qualified Network.MQTT.Packet     as MQTT
 import           Network.MQTT.Utils
-import qualified STMContainers.Map         as STM (Map)
-import qualified STMContainers.Map         as STM.Map
-import qualified STMContainers.Set         as STM (Set)
-import qualified STMContainers.Set         as STM.Set
-import           System.IO.Streams         (InputStream, OutputStream)
-import qualified System.IO.Streams         as S
-import           System.Log.Logger         (debugM)
-import           System.Random             (newStdGen, randomRs)
+import           Network.Socket          (AddrInfo)
+import qualified STMContainers.Map       as STM (Map)
+import qualified STMContainers.Map       as STM.Map
+import qualified STMContainers.Set       as STM (Set)
+import qualified STMContainers.Set       as STM.Set
+import           System.IO.Streams       (InputStream, OutputStream)
+import qualified System.IO.Streams       as S
+import           System.Log.Logger       (debugM)
+import           System.Random           (StdGen, newStdGen, randomRs)
 
+--------------------------------------------------------------------------------
+-- Data declarations
+--------------------------------------------------------------------------------
 
--- | Internal gateway state.
+data UserCredentials
+  = UserCredentials
+    { userName :: MQTT.UserName
+    , password :: Maybe MQTT.Password
+    }
+
+data ClientConfig
+  = ClientConfig
+    { ccClientIdentifier :: !MQTT.ClientIdentifier
+    , ccWillMsg          :: !(Maybe MQTT.Message)
+    , ccUserCredentials  :: !(Maybe UserCredentials)
+    , ccCleanSession     :: !Bool
+    , ccKeepAlive        :: !Word16
+    }
+
 data Gateway =
-  Gateway {
-  -- | Represents Gateway Clients which were created for handling Alien Clients.
-    gClients               :: STM.Map MQTT.ClientIdentifier GatewayClient
-
-  -- | Represents subscriptions which Gateway has (which were acknowledged by the main Broker).
+  Gateway
+  { gClients               :: STM.Map MQTT.ClientIdentifier GatewayClient
   , gSubscriptions         :: STM.Map MQTT.TopicFilter MQTT.QoS
-
-  -- | Represents awaiting for acknowledgment Subscribe packets which were received from Alien Clients.
   , gUnAckSubscribePackets :: TVar (TT.TopicFilterTrie (Map.Map MQTT.SubscribePacket GatewayClient))
-
-  -- | Represents subscriptions which each Gateway Client has (contains specific level of quality of service).
   , gClientSubscriptions   :: TVar (TT.TopicFilterTrie (Map.Map GatewayClient MQTT.QoS))
-
-  -- | Represents communication channel between Gateway and Client (which sends data to the main Broker).
-  -- Use it for sending data to the Client.
-  , gClientCommands        :: OutputStream ClientCommand
   }
 
 data GatewayClient =
@@ -76,8 +83,24 @@ data GatewayClient =
   , gcUnAckReceivedPublishIds :: STM.Set MQTT.PacketIdentifier
   }
 
+data Client
+  = Client
+    { csSendQueue                   :: TQueue (Maybe MQTT.Packet)
+    , csUsedPacketIdentifiers       :: STM.Set MQTT.PacketIdentifier
+    , csRandomVals                  :: TVar [Word16]
+    , csUnAckSentPublishPackets     :: TVar (Seq.Seq MQTT.PublishPacket)
+    , csUnAckSentPubrelPackets      :: TVar (Seq.Seq MQTT.PubrelPacket)
+    , csUnAckSentSubscribePackets   :: TVar (Seq.Seq MQTT.SubscribePacket)
+    , csUnAckSentUnsubscribePackets :: TVar (Seq.Seq MQTT.UnsubscribePacket)
+    , csUnAckReceivedPublishIds     :: STM.Set MQTT.PacketIdentifier
+    }
+
 data MQTTError = MQTTError
   deriving (Show)
+
+--------------------------------------------------------------------------------
+-- Instances
+--------------------------------------------------------------------------------
 
 instance Exception MQTTError
 
@@ -87,107 +110,50 @@ instance Eq GatewayClient where
 instance Ord GatewayClient where
   gw1 `compare` gw2 = gw1 `compare` gw2
 
--- | Creates a new Gateway.
---
-newGateway :: (InputStream ClientResult, OutputStream ClientCommand) -> IO Gateway
-newGateway (client_result, client_command) = do
-  gw <- Gateway <$> STM.Map.newIO
-                <*> STM.Map.newIO
-                <*> newTVarIO TT.empty
-                <*> newTVarIO TT.empty
-                <*> pure client_command
-
-  S.makeOutputStream (clientResultHandler gw) >>= S.connect client_result
-
-  return gw
-
-genPacketIdentifier :: GatewayClient -> STM MQTT.PacketIdentifier
-genPacketIdentifier state = do
-  randomVals <- readTVar $ gcRandomVals state
-  (identifier : restIds) <- dropWhileM
-    (\i -> STM.Set.lookup (MQTT.PacketIdentifier i) $ gcUsedPacketIdentifiers state) randomVals
-  writeTVar (gcRandomVals state) restIds
-  let packetIdentifier = MQTT.PacketIdentifier identifier
-  STM.Set.insert packetIdentifier $ gcUsedPacketIdentifiers state
-  return packetIdentifier
-
-clientResultHandler :: Gateway -> Maybe ClientResult -> IO ()
-clientResultHandler _ Nothing = return ()
-clientResultHandler gw (Just (Client.PublishResult message)) = atomically $ do
-  readTVar (gClientSubscriptions gw) >>= \clientsSubscriptions-> do
-    forM_ (TT.matches (MQTT.messageTopic message) clientsSubscriptions) $ \clientsSubscription -> do
-      forM_ (Map.toList clientsSubscription) $ \(state, qos) -> do
-        packetIdentifier <- getPublishPacketIdentifier (MQTT.messageQoS message) state
-        sendPacket state $ MQTT.PUBLISH
-          MQTT.PublishPacket { MQTT.publishDup              = False
-                             , MQTT.publishMessage          = message { MQTT.messageQoS = min qos (MQTT.messageQoS message) }
-                             , MQTT.publishPacketIdentifier = packetIdentifier
-                             }
-    where
-      getPublishPacketIdentifier MQTT.QoS0 _     = pure Nothing
-      getPublishPacketIdentifier _         state = Just <$> genPacketIdentifier state
-
-clientResultHandler gw (Just (Client.SubscribeResult subscribeResult)) = atomically $ do
-  undefined
-  -- receive subscribe result
-  -- check if we have unacknowledged subscribe packets with such topic filter
-  -- if yes -- remove entity; send suback; put to client subscription
-  -- if no -- check gateway subscriptions:
-  -- if yes -- update subscription; update trie
-
-  -- , gUnAckSubscribePackets :: STM.Map MQTT.SubscribePacket GatewayClient
-  -- SubscribeResult [(TopicFilter, Maybe QoS)]
-  -- , gUnAckSubscribePackets :: TVar (TT.TopicFilterTrie (Map.Map SubscribePacket GatewayClient))
-
-  -- forM_ subscribeResult $ \(topicFilter, qos) -> do
-  --   readTVar (gUnAckSubscribePackets gw) >>= \unAckSubscribePackets -> do
-  --     forM_ (TT.matches topicFilter unAckSubscribePackets) $ \subscribePacketsClient -> do
-  --       forM_ (Map.toList subscribePacketsClient) $ \(subscribePacket, state) -> do
-  --         undefined
-
-
-clientResultHandler gw (Just (Client.UnsubscribeResult unsubscribeResult)) = undefined
-
-newGatewayClient :: IO GatewayClient
-newGatewayClient = do
-  gen <- newStdGen
-  atomically $ GatewayClient <$> newTVar (MQTT.ClientIdentifier $ T.pack "")
-                             <*> newTQueue
-                             <*> STM.Set.new
-                             <*> newTVar (randomRs (0, 65535) gen)
-                             <*> newTVar Seq.empty
-                             <*> newTVar Seq.empty
-                             <*> STM.Set.new
+--------------------------------------------------------------------------------
+-- Handle client flow
+--------------------------------------------------------------------------------
 
 -- | Run client handling on the given streams.
 --
 -- Note that this function doesn't exit until connection is closed.
-handleClient :: Gateway -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO ()
-handleClient gw (is, os) = do
+handleAlienClient :: Gateway -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO ()
+handleAlienClient gw (is, os) = do
   state <- newGatewayClient
 
-  t <- forkIO $ receiverThread gw state is `finally`
+  t <- forkIO $ receiverGatewayClientThread gw state is `finally`
     -- properly close sender queue
     atomically (writeTQueue (gcSendQueue state) Nothing)
 
-  clientSender os (gcSendQueue state) `finally` killThread t
+  sender os (gcSendQueue state) `finally` killThread t
 
-receiverThread :: Gateway -> GatewayClient -> InputStream MQTT.Packet -> IO ()
-receiverThread gw state is = do
-    r <- try (authenticator gw state is) :: IO (Either SomeException ())
+newGatewayClient :: IO GatewayClient
+newGatewayClient = do
+  newStdGen >>= \gen -> atomically $ do
+    GatewayClient <$> newTVar (MQTT.ClientIdentifier $ T.pack "")
+                  <*> newTQueue
+                  <*> STM.Set.new
+                  <*> newTVar (randomRs (0, 65535) gen)
+                  <*> newTVar Seq.empty
+                  <*> newTVar Seq.empty
+                  <*> STM.Set.new
+
+receiverGatewayClientThread :: Gateway -> GatewayClient -> InputStream MQTT.Packet -> IO ()
+receiverGatewayClientThread gw state is = do
+    r <- try (gatewayClientAuthenticator gw state is) :: IO (Either SomeException ())
     debugM "MQTT.Gateway" $ "Receiver exit: " ++ show r
 
-authenticator :: Gateway -> GatewayClient -> InputStream MQTT.Packet -> IO ()
-authenticator gw state is = do
+gatewayClientAuthenticator :: Gateway -> GatewayClient -> InputStream MQTT.Packet -> IO ()
+gatewayClientAuthenticator gw state is = do
   -- Possible pattern-match failure is intended
   Just (MQTT.CONNECT MQTT.ConnectPacket{..}) <- S.read is
   if connectProtocolLevel /= 4
     then
       atomically $
-        sendPacket state (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.UnacceptableProtocol)
+        sendGatewayClientPacket state (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.UnacceptableProtocol)
     else do
       atomically $ do
-        sendPacket state (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.Accepted)
+        sendGatewayClientPacket state (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.Accepted)
 
         mx <- STM.Map.lookup connectClientIdentifier (gClients gw)
         modifyTVar (gcClientIdentifier state) (const connectClientIdentifier)
@@ -196,46 +162,20 @@ authenticator gw state is = do
           Nothing -> return ()
           Just x  -> writeTQueue (gcSendQueue x) Nothing
 
-      S.makeOutputStream (packetHandler gw state) >>= S.connect is
+      S.makeOutputStream (gatewayClientPacketHandler gw state) >>= S.connect is
 
-packetHandler :: Gateway -> GatewayClient -> Maybe MQTT.Packet -> IO ()
-packetHandler _  _     Nothing  = return ()
-packetHandler gw state (Just p) = do
+gatewayClientPacketHandler :: Gateway -> GatewayClient -> Maybe MQTT.Packet -> IO ()
+gatewayClientPacketHandler _  _     Nothing  = return ()
+gatewayClientPacketHandler gw state (Just p) = do
   debugM "MQTT.Gateway" $ "Received: " ++ show p
   case p of
     MQTT.CONNECT _ -> throwIO MQTTError
 
     MQTT.PINGREQ _ -> atomically $ do
-      sendPacket state (MQTT.PINGRESP MQTT.PingrespPacket)
-
-    MQTT.SUBSCRIBE subscribe@MQTT.SubscribePacket{..} -> do
-      forM_ subscribeTopicFiltersQoS $ \(topicFilter, qos) -> do
-        present <- atomically $ do
-          gwSubscription <- STM.Map.lookup topicFilter (gSubscriptions gw)
-          case gwSubscription of
-            Just gwQos -> do
-              if fromEnum qos <= fromEnum gwQos
-                then do
-                  sendPacket state $ MQTT.SUBACK (MQTT.SubackPacket subscribePacketIdentifier [Just qos])
-                  readTVar (gClientSubscriptions gw) >>= \clientsSubscriptions-> do
-                    case (TT.lookup topicFilter clientsSubscriptions) of
-                      Just clientsSubscription -> writeTVar (gClientSubscriptions gw) $ do
-                        TT.insert topicFilter (Map.insert state qos clientsSubscription) clientsSubscriptions
-                      Nothing -> writeTVar (gClientSubscriptions gw) $ do
-                        TT.insert topicFilter (Map.singleton state qos) clientsSubscriptions
-                  return True
-                else do
-                  -- TODO Start from here. Is topic filter trie good here? If yes, how to abstract lookup-insert operation...
-                  STM.Map.insert state subscribe (gUnAckSubscribePackets gw)
-                  return False
-            Nothing -> do
-              STM.Map.insert state subscribe (gUnAckSubscribePackets gw)
-              return False
-
-        unless present $ ClientUtils.subscribe (gClientCommands gw) [(topicFilter, qos)]
+      sendGatewayClientPacket state (MQTT.PINGRESP MQTT.PingrespPacket)
 
     MQTT.UNSUBSCRIBE MQTT.UnsubscribePacket{..} -> atomically $ do
-      sendPacket state $
+      sendGatewayClientPacket state $
         MQTT.UNSUBACK (MQTT.UnsubackPacket unsubscribePacketIdentifier)
 
     MQTT.PUBACK pubackPacket -> atomically $ do
@@ -256,7 +196,7 @@ packetHandler gw state (Just p) = do
       let pubrelPacket = MQTT.PubrelPacket packetIdentifier
       writeTVar (gcUnAckSentPublishPackets state) $ xs Seq.>< Seq.drop 1 ys
       modifyTVar (gcUnAckSentPubrelPackets state) $ \pp -> pp Seq.|> pubrelPacket
-      sendPacket state $ MQTT.PUBREL pubrelPacket
+      sendGatewayClientPacket state $ MQTT.PUBREL pubrelPacket
 
     MQTT.PUBCOMP pubcompPacket -> atomically $ do
       unAckSentPubrelPackets <- readTVar $ gcUnAckSentPubrelPackets state
@@ -272,28 +212,118 @@ packetHandler gw state (Just p) = do
       case qos of
         MQTT.QoS0 -> return ()
         MQTT.QoS1 -> atomically $ do
-          sendPacket state $ MQTT.PUBACK (MQTT.PubackPacket packetIdentifier)
+          sendGatewayClientPacket state $ MQTT.PUBACK (MQTT.PubackPacket packetIdentifier)
         MQTT.QoS2 -> atomically $ do
-          sendPacket state $ MQTT.PUBREC (MQTT.PubrecPacket packetIdentifier)
+          sendGatewayClientPacket state $ MQTT.PUBREC (MQTT.PubrecPacket packetIdentifier)
           let s = gcUnAckReceivedPublishIds state
           present <- STM.Set.lookup packetIdentifier s
           unless present $ STM.Set.insert packetIdentifier s
-      ClientUtils.publish (gClientCommands gw) (MQTT.publishMessage publishPacket)
+      undefined
+
 
     MQTT.PUBREL pubrelPacket -> atomically $ do
       let packetIdentifier = MQTT.pubrelPacketIdentifier pubrelPacket
       STM.Set.delete packetIdentifier $ gcUnAckReceivedPublishIds state
-      sendPacket state $ MQTT.PUBCOMP (MQTT.PubcompPacket packetIdentifier)
+      sendGatewayClientPacket state $ MQTT.PUBCOMP (MQTT.PubcompPacket packetIdentifier)
 
     _ -> return ()
 
-sendPacket :: GatewayClient -> MQTT.Packet -> STM ()
-sendPacket state p = do
+
+sendGatewayClientPacket :: GatewayClient -> MQTT.Packet -> STM ()
+sendGatewayClientPacket state p = do
   writeTQueue (gcSendQueue state) (Just p)
 
-clientSender :: OutputStream MQTT.Packet -> TQueue (Maybe MQTT.Packet) -> IO ()
-clientSender os queue = do
+--------------------------------------------------------------------------------
+-- Gateway creation
+--------------------------------------------------------------------------------
+
+newGateway :: ClientConfig -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO Gateway
+newGateway config brokerStreams = do
+  gw <- Gateway <$> STM.Map.newIO
+                <*> STM.Map.newIO
+                <*> newTVarIO TT.empty
+                <*> newTVarIO TT.empty
+
+  connectClient config gw brokerStreams
+
+  return gw
+
+connectClient :: ClientConfig -> Gateway -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO ()
+connectClient ClientConfig{..} gw (is,os) = do
+  state <- newClientState
+
+  t <- forkIO $ receiverClientThread gw state is `finally`
+    -- properly close sender queue
+    atomically (writeTQueue (csSendQueue state) Nothing)
+
+  sendConnect state
+    MQTT.ConnectPacket
+    { connectClientIdentifier = ccClientIdentifier
+    , connectProtocolLevel    = 0x04
+    , connectWillMsg          = ccWillMsg
+    , connectUserName         = fmap userName ccUserCredentials
+    , connectPassword         = maybe Nothing password ccUserCredentials
+    , connectCleanSession     = ccCleanSession
+    , connectKeepAlive        = ccKeepAlive
+    }
+
+  sender os (csSendQueue state) `finally` killThread t
+
+receiverClientThread :: Gateway -> Client -> InputStream MQTT.Packet -> IO ()
+receiverClientThread gw state is = do
+    r <- try (clientAuthenticator gw state is) :: IO (Either SomeException ())
+    debugM "MQTT.Gateway" $ "Receiver exit: " ++ show r
+
+clientAuthenticator :: Gateway -> Client -> InputStream MQTT.Packet -> IO ()
+clientAuthenticator gw state is = do
+  -- TODO Start from here
+  undefined
+
+sendConnect :: Client -> MQTT.ConnectPacket -> IO ()
+sendConnect state packet = atomically $ sendClientPacket state $ MQTT.CONNECT packet
+
+sendClientPacket :: Client -> MQTT.Packet -> STM ()
+sendClientPacket state p = writeTQueue (csSendQueue state) $ Just p
+
+newClientState :: IO Client
+newClientState = do
+  newStdGen >>= \gen -> atomically $ do
+    Client <$> newTQueue
+                <*> STM.Set.new
+                <*> newTVar (randomRs (0, 65535) gen)
+                <*> newTVar Seq.empty
+                <*> newTVar Seq.empty
+                <*> newTVar Seq.empty
+                <*> newTVar Seq.empty
+                <*> STM.Set.new
+
+defaultClientConfig :: ClientConfig
+defaultClientConfig = ClientConfig
+                      -- TODO generate random string for client identifier?
+                      { ccClientIdentifier = MQTT.ClientIdentifier $ T.pack "arachne-client"
+                      , ccWillMsg          = Nothing
+                      , ccUserCredentials  = Nothing
+                      , ccCleanSession     = True
+                      , ccKeepAlive        = 0
+                      }
+
+--------------------------------------------------------------------------------
+-- Helper functions
+--------------------------------------------------------------------------------
+
+genPacketIdentifier :: GatewayClient -> STM MQTT.PacketIdentifier
+genPacketIdentifier state = do
+  randomVals <- readTVar $ gcRandomVals state
+  (identifier : restIds) <- dropWhileM
+    (\i -> STM.Set.lookup (MQTT.PacketIdentifier i) $ gcUsedPacketIdentifiers state) randomVals
+  writeTVar (gcRandomVals state) restIds
+  let packetIdentifier = MQTT.PacketIdentifier identifier
+  STM.Set.insert packetIdentifier $ gcUsedPacketIdentifiers state
+  return packetIdentifier
+
+sender :: OutputStream MQTT.Packet -> TQueue (Maybe MQTT.Packet) -> IO ()
+sender os queue = do
   stmQueueStream queue >>= S.mapM_ logPacket >>= S.connectTo os
-  debugM "MQTT.Gateway" $ "clientSender exit"
+  debugM "MQTT.Gateway" $ "sender exit"
   where
     logPacket p = debugM "MQTT.Gateway" $ "Sending: " ++ show p

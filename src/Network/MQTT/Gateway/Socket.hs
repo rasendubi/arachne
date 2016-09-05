@@ -4,22 +4,32 @@
 module Network.MQTT.Gateway.Socket
   ( defaultMQTTAddr
   , listenOnAddr
+  , newGatewayOnSocket
 
   -- * Low-level functions
   , listenOnSocket
   ) where
 
-import Control.Concurrent (forkIOWithUnmask)
-import Control.Exception (allowInterrupt, bracket, mask_, SomeException, try)
+import           Control.Concurrent        (forkIOWithUnmask)
+import           Control.Exception         (SomeException, allowInterrupt,
+                                            bracket, mask_, try)
+import           Control.Monad             (forever, when)
+import           Network.MQTT.Gateway.Core
+import           Network.MQTT.Utils
+import           Network.Socket            (AddrInfo (AddrInfo),
+                                            Family (AF_INET),
+                                            SockAddr (SockAddrInet), Socket,
+                                            SocketOption (ReusePort),
+                                            SocketOption (KeepAlive),
+                                            SocketType (Stream), accept,
+                                            addrAddress, addrCanonName,
+                                            addrFamily, addrFlags, addrProtocol,
+                                            addrSocketType, bind, close,
+                                            connect, defaultProtocol,
+                                            isSupportedSocketOption, listen,
+                                            setSocketOption, socket)
 
-import Control.Monad (forever, when)
-
-import Network.MQTT.Gateway.Core
-import Network.MQTT.Utils
-
-import Network.Socket (AddrInfo(AddrInfo), Family(AF_INET), SockAddr(SockAddrInet), SocketOption(ReusePort), SocketType(Stream), accept, addrAddress, addrCanonName, addrFamily, addrFlags, addrProtocol, addrSocketType, bind, close, listen, socket, setSocketOption, Socket, isSupportedSocketOption)
-
-import System.Log.Logger (debugM)
+import           System.Log.Logger         (debugM)
 
 -- | Default address for the MQTT server.
 --
@@ -74,6 +84,17 @@ listenOnSocket gw sock = do
 
       -- New thread is run in masked state.
       forkIOWithUnmask $ \unmask -> do
-        res <- unmask (try (handleClient gw streams)) :: IO (Either SomeException ())
+        res <- unmask (try (handleAlienClient gw streams)) :: IO (Either SomeException ())
         close s
         debugM "MQTT.Gateway.Socket" $ "handleClient exited with " ++ show res
+
+-- TODO: socket leak
+newGatewayOnSocket :: AddrInfo -> IO Gateway
+newGatewayOnSocket brokerAddr = do
+  sock <- socket (addrFamily brokerAddr) Stream defaultProtocol
+  setSocketOption sock KeepAlive 1
+  connect sock (addrAddress brokerAddr)
+
+  debugM "MQTT.Gateway" $ "Broker socket opened: " ++ show brokerAddr
+
+  socketToMqttStreams sock >>= newGateway defaultClientConfig
