@@ -12,6 +12,7 @@
 -- new clients.
 module Network.MQTT.Gateway.Core
   ( Gateway
+  , ClientConfig(..)
   , newGateway
   , handleAlienClient
   ) where
@@ -120,80 +121,41 @@ handleAlienClient :: Gateway -> (InputStream MQTT.Packet, OutputStream MQTT.Pack
 handleAlienClient gw (is, os) = do
   mqttSession <- newMqttSession
 
-  t <- forkIO $ receiverThread gw mqttSession is True `finally`
+  t <- forkIO $ gatewayClientReceiverThread gw mqttSession is `finally`
     -- properly close sender queue
     atomically (closeSenderQueue mqttSession)
 
   sender mqttSession os `finally` killThread t
 
---------------------------------------------------------------------------------
--- Gateway creation
---------------------------------------------------------------------------------
+gatewayClientReceiverThread :: Gateway -> MqttSession -> InputStream MQTT.Packet -> IO ()
+gatewayClientReceiverThread gw mqttSession is = do
+    r <- try (gatewayClientAuthenticator gw mqttSession is) :: IO (Either SomeException ())
+    debugM "MQTT.GatewayClient" $ "Receiver exit: " ++ show r
 
-newGateway :: ClientConfig -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO Gateway
-newGateway config brokerStreams = do
-  gw <- Gateway <$> STM.Map.newIO
-                <*> newTVarIO TT.empty
+gatewayClientAuthenticator :: Gateway -> MqttSession -> InputStream MQTT.Packet -> IO ()
+gatewayClientAuthenticator gw mqttSession is = do
+  -- Possible pattern-match failure is intended
+  Just (MQTT.CONNECT MQTT.ConnectPacket{..}) <- S.read is
+  if connectProtocolLevel /= 4
+    then
+      atomically $
+        sendPacket mqttSession (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.UnacceptableProtocol)
+    else do
+      atomically $ do
+        sendPacket mqttSession (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.Accepted)
 
-  connectClient config gw brokerStreams
+        mx <- STM.Map.lookup connectClientIdentifier (gClients gw)
+        STM.Map.insert (GatewayClient mqttSession connectClientIdentifier)
+          connectClientIdentifier (gClients gw)
+        case mx of
+          Nothing -> return ()
+          Just x -> closeSenderQueue (gcMqttSession x)
 
-  return gw
+      S.makeOutputStream (gatewayClientPacketHandler gw mqttSession) >>= S.connect is
 
-connectClient :: ClientConfig -> Gateway -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO ()
-connectClient ClientConfig{..} gw (is,os) = do
-  mqttSession <- newMqttSession
-
-  t <- forkIO $ receiverThread gw mqttSession is False `finally`
-    -- properly close sender queue
-    atomically (closeSenderQueue mqttSession)
-
-  sendConnect mqttSession
-    MQTT.ConnectPacket
-    { connectClientIdentifier = ccClientIdentifier
-    , connectProtocolLevel    = 0x04
-    , connectWillMsg          = ccWillMsg
-    , connectUserName         = fmap userName ccUserCredentials
-    , connectPassword         = maybe Nothing password ccUserCredentials
-    , connectCleanSession     = ccCleanSession
-    , connectKeepAlive        = ccKeepAlive
-    }
-
-  sender mqttSession os `finally` killThread t
-
---------------------------------------------------------------------------------
--- Helper functions
---------------------------------------------------------------------------------
-
-genPacketIdentifier :: MqttSession -> STM MQTT.PacketIdentifier
-genPacketIdentifier mqttSession = do
-  randomVals <- readTVar $ msRandomVals mqttSession
-  (identifier : restIds) <- dropWhileM
-    (\i -> STM.Set.lookup (MQTT.PacketIdentifier i) $ msUsedPacketIdentifiers mqttSession) randomVals
-  writeTVar (msRandomVals mqttSession) restIds
-  let packetIdentifier = MQTT.PacketIdentifier identifier
-  STM.Set.insert packetIdentifier $ msUsedPacketIdentifiers mqttSession
-  return packetIdentifier
-
-sender :: MqttSession -> OutputStream MQTT.Packet -> IO ()
-sender mqttSession os = do
-  stmQueueStream (msSenderQueue mqttSession) >>= S.mapM_ logPacket >>= S.connectTo os
-  debugM "MQTT.Gateway" $ "sender exit"
-  where
-    logPacket p = debugM "MQTT.Gateway" $ "Sending: " ++ show p
-
-closeSenderQueue :: MqttSession -> STM ()
-closeSenderQueue mqttSession = writeTQueue (msSenderQueue mqttSession) Nothing
-
-sendPacket :: MqttSession -> MQTT.Packet -> STM ()
-sendPacket mqttSession p = writeTQueue (msSenderQueue mqttSession) $ Just p
-
-sendConnect :: MqttSession -> MQTT.ConnectPacket -> IO ()
-sendConnect mqttSession connectPacket = atomically $ do
-  sendPacket mqttSession $ MQTT.CONNECT connectPacket
-
-packetHandler :: Gateway -> MqttSession -> Maybe MQTT.Packet -> IO ()
-packetHandler _  _ Nothing = return ()
-packetHandler gw mqttSession (Just p) = do
+gatewayClientPacketHandler :: Gateway -> MqttSession -> Maybe MQTT.Packet -> IO ()
+gatewayClientPacketHandler _  _ Nothing = return ()
+gatewayClientPacketHandler gw mqttSession (Just p) = do
   debugM "MQTT.GatewayClient" $ "Received: " ++ show p
   case p of
     MQTT.CONNECT _ -> throwIO MQTTError
@@ -247,13 +209,100 @@ packetHandler gw mqttSession (Just p) = do
           unless present $ STM.Set.insert packetIdentifier s
       undefined
 
-
     MQTT.PUBREL pubrelPacket -> atomically $ do
       let packetIdentifier = MQTT.pubrelPacketIdentifier pubrelPacket
       STM.Set.delete packetIdentifier $ msUnAckReceivedPublishIds mqttSession
       sendPacket mqttSession $ MQTT.PUBCOMP (MQTT.PubcompPacket packetIdentifier)
 
     _ -> return ()
+
+--------------------------------------------------------------------------------
+-- Gateway creation
+--------------------------------------------------------------------------------
+
+newGateway :: ClientConfig -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO Gateway
+newGateway config brokerStreams = do
+  gw <- Gateway <$> STM.Map.newIO
+                <*> newTVarIO TT.empty
+
+  connectBrokerClient config gw brokerStreams
+
+  return gw
+
+connectBrokerClient :: ClientConfig -> Gateway -> (InputStream MQTT.Packet, OutputStream MQTT.Packet) -> IO ()
+connectBrokerClient ClientConfig{..} gw (is,os) = do
+  mqttSession <- newMqttSession
+
+  t <- forkIO $ brokerClientReceiverThread gw mqttSession is `finally`
+    -- properly close sender queue
+    atomically (closeSenderQueue mqttSession)
+
+  sendConnect mqttSession
+    MQTT.ConnectPacket
+    { connectClientIdentifier = ccClientIdentifier
+    , connectProtocolLevel    = 0x04
+    , connectWillMsg          = ccWillMsg
+    , connectUserName         = fmap userName ccUserCredentials
+    , connectPassword         = maybe Nothing password ccUserCredentials
+    , connectCleanSession     = ccCleanSession
+    , connectKeepAlive        = ccKeepAlive
+    }
+
+  sender mqttSession os `finally` killThread t
+
+brokerClientReceiverThread :: Gateway -> MqttSession -> InputStream MQTT.Packet -> IO ()
+brokerClientReceiverThread gw mqttSession is = do
+    r <- try (brokerClientAuthenticator gw mqttSession is) :: IO (Either SomeException ())
+    debugM "MQTT.BrokerClient" $ "Receiver exit: " ++ show r
+
+brokerClientAuthenticator :: Gateway -> MqttSession -> InputStream MQTT.Packet -> IO ()
+brokerClientAuthenticator gw mqttSession is = do
+  -- Possible pattern-match failure is intended
+  Just (MQTT.CONNACK MQTT.ConnackPacket{..}) <- S.read is
+  unless (connackReturnCode /= MQTT.Accepted) $ do
+        S.makeOutputStream (brokerClientPacketHandler gw mqttSession) >>= S.connect is
+
+brokerClientPacketHandler :: Gateway -> MqttSession -> Maybe MQTT.Packet -> IO ()
+brokerClientPacketHandler _  _ Nothing = return ()
+brokerClientPacketHandler gw mqttSession (Just p) = do
+  debugM "MQTT.BrokerClient" $ "Received: " ++ show p
+  case p of
+    MQTT.CONNECT _ -> throwIO MQTTError
+
+    MQTT.SUBSCRIBE subscribe@MQTT.SubscribePacket{..} -> do
+      -- TODO Start from here
+      undefined
+
+--------------------------------------------------------------------------------
+-- Helper functions
+--------------------------------------------------------------------------------
+
+genPacketIdentifier :: MqttSession -> STM MQTT.PacketIdentifier
+genPacketIdentifier mqttSession = do
+  randomVals <- readTVar $ msRandomVals mqttSession
+  (identifier : restIds) <- dropWhileM
+    (\i -> STM.Set.lookup (MQTT.PacketIdentifier i) $ msUsedPacketIdentifiers mqttSession) randomVals
+  writeTVar (msRandomVals mqttSession) restIds
+  let packetIdentifier = MQTT.PacketIdentifier identifier
+  STM.Set.insert packetIdentifier $ msUsedPacketIdentifiers mqttSession
+  return packetIdentifier
+
+sender :: MqttSession -> OutputStream MQTT.Packet -> IO ()
+sender mqttSession os = do
+  stmQueueStream (msSenderQueue mqttSession) >>= S.mapM_ logPacket >>= S.connectTo os
+  debugM "MQTT.Gateway" $ "sender exit"
+  where
+    logPacket p = debugM "MQTT.Gateway" $ "Sending: " ++ show p
+
+closeSenderQueue :: MqttSession -> STM ()
+closeSenderQueue mqttSession = writeTQueue (msSenderQueue mqttSession) Nothing
+
+sendPacket :: MqttSession -> MQTT.Packet -> STM ()
+sendPacket mqttSession p = writeTQueue (msSenderQueue mqttSession) $ Just p
+
+sendConnect :: MqttSession -> MQTT.ConnectPacket -> IO ()
+sendConnect mqttSession connectPacket = atomically $ do
+  sendPacket mqttSession $ MQTT.CONNECT connectPacket
 
 newMqttSession :: IO MqttSession
 newMqttSession = do
@@ -266,36 +315,3 @@ newMqttSession = do
                 <*> newTVar Seq.empty
                 <*> newTVar Seq.empty
                 <*> STM.Set.new
-
-receiverThread :: Gateway -> MqttSession -> InputStream MQTT.Packet -> Bool -> IO ()
-receiverThread gw mqttSession is is_server = do
-    r <- try (authenticator gw mqttSession is is_server) :: IO (Either SomeException ())
-    debugM "MQTT.Gateway" $ "Receiver exit: " ++ show r
-
-authenticator :: Gateway -> MqttSession -> InputStream MQTT.Packet -> Bool -> IO ()
-authenticator gw mqttSession is is_server = do
-  if is_server
-    then do
-      -- Possible pattern-match failure is intended
-      Just (MQTT.CONNECT MQTT.ConnectPacket{..}) <- S.read is
-      if connectProtocolLevel /= 4
-        then
-          atomically $
-            sendPacket mqttSession (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.UnacceptableProtocol)
-        else do
-          atomically $ do
-            sendPacket mqttSession (MQTT.CONNACK $ MQTT.ConnackPacket False MQTT.Accepted)
-
-            mx <- STM.Map.lookup connectClientIdentifier (gClients gw)
-            STM.Map.insert (GatewayClient mqttSession connectClientIdentifier)
-              connectClientIdentifier (gClients gw)
-            case mx of
-              Nothing -> return ()
-              Just x -> closeSenderQueue (gcMqttSession x)
-
-          S.makeOutputStream (packetHandler gw mqttSession) >>= S.connect is
-    else do
-      -- Possible pattern-match failure is intended
-      Just (MQTT.CONNACK MQTT.ConnackPacket{..}) <- S.read is
-      unless (connackReturnCode /= MQTT.Accepted) $ do
-            S.makeOutputStream (packetHandler gw mqttSession) >>= S.connect is

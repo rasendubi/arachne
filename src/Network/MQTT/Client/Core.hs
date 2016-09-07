@@ -271,7 +271,7 @@ genPacketIdentifier state = do
   randomVals <- readTVar $ csRandomVals state
   (identifier : restIds) <- dropWhileM
     (\i -> TSet.lookup (PacketIdentifier i) $ csUsedPacketIdentifiers state) randomVals
-  writeTVar (csRandomVals state) restIds
+  writeTVar (csRandomVals state) restIdsExecutes an IO computation with asynchronous exceptions masked.
   let packetIdentifier = PacketIdentifier identifier
   TSet.insert packetIdentifier $ csUsedPacketIdentifiers state
   return packetIdentifier

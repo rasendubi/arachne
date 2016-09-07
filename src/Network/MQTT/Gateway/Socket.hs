@@ -14,9 +14,11 @@ module Network.MQTT.Gateway.Socket
 
 import           Control.Concurrent        (forkIOWithUnmask)
 import           Control.Exception         (SomeException, allowInterrupt,
-                                            bracket, mask_, try)
+                                            bracket, mask_, mask, onException, try)
 import           Control.Monad             (forever, when)
+import qualified Data.Text                 as T
 import           Network.MQTT.Gateway.Core
+import           Network.MQTT.Packet
 import           Network.MQTT.Utils
 import           Network.Socket            (AddrInfo (AddrInfo),
                                             Family (AF_INET),
@@ -48,7 +50,7 @@ defaultMQTTAddr = AddrInfo{ addrFlags      = []
 -- | Default MQTT Client config.
 defaultClientConfig :: ClientConfig
 defaultClientConfig = ClientConfig
-                      { ccClientIdentifier = MQTT.ClientIdentifier $ T.pack "arachne-client"
+                      { ccClientIdentifier = ClientIdentifier $ T.pack "arachne-client"
                       , ccWillMsg          = Nothing
                       , ccUserCredentials  = Nothing
                       , ccCleanSession     = True
@@ -101,13 +103,13 @@ listenOnSocket gw sock = do
         debugM "MQTT.Gateway.Socket" $ "handleClient exited with " ++ show res
 
 newGatewayOnSocket :: AddrInfo -> IO Gateway
-newGatewayOnSocket brokerAddr = do
+newGatewayOnSocket brokerAddr = mask $ \unmask -> do
   sock <- socket (addrFamily brokerAddr) Stream defaultProtocol
   (unmask $ do
-    setSocketOption sock KeepAlive 1
-    connect sock (addrAddress brokerAddr)
+     setSocketOption sock KeepAlive 1
+     connect sock (addrAddress brokerAddr)
 
-    debugM "MQTT.Gateway" $ "Broker socket opened: " ++ show brokerAddr)
+     debugM "MQTT.Gateway" $ "Broker socket opened: " ++ show brokerAddr
 
-    socketToMqttStreams sock >>= newGateway defaultClientConfig)
-      `onException` close sock
+     socketToMqttStreams sock >>= newGateway defaultClientConfig)
+       `onException` close sock
