@@ -54,7 +54,7 @@ import GHC.Generics (Generic)
 -- server won't store any state among the connections. (Note that
 -- server may not support empty client identifiers.)
 newtype ClientIdentifier = ClientIdentifier { unClientIdentifier :: Text }
-  deriving (Eq, Show, Generic, Hashable)
+  deriving (Eq, Show, Generic, Ord, Hashable)
 
 -- | User name.
 --

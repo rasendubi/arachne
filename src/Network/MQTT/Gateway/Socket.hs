@@ -3,6 +3,8 @@
 -- streams.
 module Network.MQTT.Gateway.Socket
   ( defaultMQTTAddr
+  , defaultClientConfig
+
   , listenOnAddr
   , newGatewayOnSocket
 
@@ -35,13 +37,23 @@ import           System.Log.Logger         (debugM)
 --
 -- Listen on all IPv4 addresses, TCP port 1883.
 defaultMQTTAddr :: AddrInfo
-defaultMQTTAddr = AddrInfo{ addrFlags = []
-                          , addrFamily = AF_INET
+defaultMQTTAddr = AddrInfo{ addrFlags      = []
+                          , addrFamily     = AF_INET
                           , addrSocketType = Stream
-                          , addrProtocol = 6 -- TCP
-                          , addrAddress = SockAddrInet 1883 0
-                          , addrCanonName = Nothing
+                          , addrProtocol   = 6 -- TCP
+                          , addrAddress    = SockAddrInet 1883 0
+                          , addrCanonName  = Nothing
                           }
+
+-- | Default MQTT Client config.
+defaultClientConfig :: ClientConfig
+defaultClientConfig = ClientConfig
+                      { ccClientIdentifier = MQTT.ClientIdentifier $ T.pack "arachne-client"
+                      , ccWillMsg          = Nothing
+                      , ccUserCredentials  = Nothing
+                      , ccCleanSession     = True
+                      , ccKeepAlive        = 0
+                      }
 
 -- | Listen for clients on the given address and add connected clients
 -- to the given gateway.
@@ -88,13 +100,14 @@ listenOnSocket gw sock = do
         close s
         debugM "MQTT.Gateway.Socket" $ "handleClient exited with " ++ show res
 
--- TODO: socket leak
 newGatewayOnSocket :: AddrInfo -> IO Gateway
 newGatewayOnSocket brokerAddr = do
   sock <- socket (addrFamily brokerAddr) Stream defaultProtocol
-  setSocketOption sock KeepAlive 1
-  connect sock (addrAddress brokerAddr)
+  (unmask $ do
+    setSocketOption sock KeepAlive 1
+    connect sock (addrAddress brokerAddr)
 
-  debugM "MQTT.Gateway" $ "Broker socket opened: " ++ show brokerAddr
+    debugM "MQTT.Gateway" $ "Broker socket opened: " ++ show brokerAddr)
 
-  socketToMqttStreams sock >>= newGateway defaultClientConfig
+    socketToMqttStreams sock >>= newGateway defaultClientConfig)
+      `onException` close sock
