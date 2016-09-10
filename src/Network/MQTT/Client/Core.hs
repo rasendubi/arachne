@@ -217,7 +217,7 @@ receiver state result_os is = S.makeOutputStream handler >>= S.connect is
           let qos = messageQoS $ publishMessage publishPacket
           let packetIdentifier = publishPacketIdentifier publishPacket
           case qos of
-            QoS0 ->
+            QoS0 -> do
               writeTo result_os $ PublishResult $ publishMessage publishPacket
             QoS1 -> do
               writeTo result_os $ PublishResult $ publishMessage publishPacket
@@ -271,7 +271,7 @@ genPacketIdentifier state = do
   randomVals <- readTVar $ csRandomVals state
   (identifier : restIds) <- dropWhileM
     (\i -> TSet.lookup (PacketIdentifier i) $ csUsedPacketIdentifiers state) randomVals
-  writeTVar (csRandomVals state) restIdsExecutes an IO computation with asynchronous exceptions masked.
+  writeTVar (csRandomVals state) restIds
   let packetIdentifier = PacketIdentifier identifier
   TSet.insert packetIdentifier $ csUsedPacketIdentifiers state
   return packetIdentifier
